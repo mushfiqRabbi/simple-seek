@@ -20,6 +20,7 @@ import { getAllJobs, getJobCount, updateJob, deleteJob, getJobById, getAuditLogs
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import crypto from "node:crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -117,6 +118,13 @@ app.post("/api/check-job", async (req, res) => {
       raw_html: html,
       raw_pi_response: JSON.stringify(extracted),
       source_domain: sourceDomain,
+    });
+
+    // Fire async audit for this new job (non-blocking — response sent immediately)
+    auditSingleJob(saved.id, crypto.randomUUID()).then(written => {
+      if (written > 0) console.log(`[api] Auto-audit: job #${saved.id} — ${written} log(s) written`);
+    }).catch(err => {
+      console.error(`[api] Auto-audit failed for job #${saved.id}:`, err.message);
     });
 
     return res.json({
@@ -415,6 +423,115 @@ async function getLastAuditedId() {
 }
 
 /**
+ * Audit a single job by ID. Used by the check-job handler (auto-audit on save)
+ * and by POST /api/audit/run (batch audit).
+ */
+async function auditSingleJob(jobId, runId) {
+  if (!piClient || !piClient.ready) {
+    console.log(`[audit] Skipping job #${jobId} — Pi client not ready`);
+    return 0;
+  }
+
+  // Fetch the job
+  const jobResult = await query(
+    "SELECT id, url, company, title, location, deadline, role_type, job_id, summary, raw_html FROM jobs WHERE id = ?",
+    [jobId]
+  );
+  if (!jobResult.rows[0]) {
+    console.log(`[audit] Job #${jobId} not found, skipping`);
+    return 0;
+  }
+  const row = jobResult.rows[0];
+
+  // Send raw HTML to Pi for extraction
+  let extracted = {};
+  try {
+    extracted = await piClient.extractFromRawHtml(row.raw_html || "");
+  } catch (err) {
+    console.error(`[audit] Pi extraction failed for job #${jobId}:`, err.message);
+    return 0;
+  }
+
+  // Compare against DB values
+  const stored = {
+    company: row.company,
+    title: row.title,
+    location: row.location,
+    deadline: row.deadline,
+    role_type: row.role_type,
+    job_id: row.job_id,
+  };
+
+  const fields = ["company", "title", "location", "deadline", "role_type", "job_id"];
+  const allowedAutoFields = ["company", "title", "location", "deadline", "role_type", "job_id"];
+  let logsWritten = 0;
+
+  for (const field of fields) {
+    const storedVal = stored[field];
+    const foundVal = extracted[field];
+
+    let status, foundValue, storedValue, note;
+    const sourceVal = "llm";
+    let autoApplied = false;
+
+    if (foundVal !== undefined && foundVal !== null && (storedVal === null || storedVal === undefined)) {
+      status = "missing";
+      foundValue = String(foundVal);
+      storedValue = "null";
+      note = `Pi found "${foundVal}" in raw HTML but DB has null`;
+      if (allowedAutoFields.includes(field)) autoApplied = true;
+    } else if (foundVal !== undefined && foundVal !== null && storedVal !== null && String(foundVal).toLowerCase() !== String(storedVal).toLowerCase()) {
+      status = "mismatch";
+      foundValue = String(foundVal);
+      storedValue = String(storedVal);
+      note = `Pi found "${foundVal}" in raw HTML but DB has "${storedVal}"`;
+      if (allowedAutoFields.includes(field)) autoApplied = true;
+    } else if (foundVal !== undefined && foundVal !== null && storedVal !== null) {
+      status = "ok";
+      foundValue = String(foundVal);
+      storedValue = String(storedVal);
+      note = `"${foundVal}" matches (Pi)`;
+    } else {
+      status = "na";
+      foundValue = null;
+      storedValue = storedVal !== null ? String(storedVal) : "null";
+      note = "Pi could not find this field in the raw HTML";
+    }
+
+    // Dedup: skip if same (job_id, field, status, extraction_not_fixed) already exists
+    const existing = await query(
+      "SELECT id FROM audit_logs WHERE job_id = ? AND field = ? AND status = ? AND extraction_fixed = 0 LIMIT 1",
+      [jobId, field, status]
+    );
+    if (existing.rows[0]) continue;
+
+    // Auto-apply: update the job's field with the found value
+    if (autoApplied) {
+      const updateData = {};
+      updateData[field] = foundValue;
+      try {
+        await updateJob(jobId, updateData);
+      } catch (err) {
+        console.error(`[audit] Failed to auto-apply ${field} for job #${jobId}: ${err.message}`);
+      }
+    }
+
+    // Insert with resolved=1 (data patched) and extraction_fixed=0 (code still needs fix)
+    await query(
+      "INSERT INTO audit_logs (run_id, job_id, field, status, found_value, stored_value, source, note, resolved, extraction_fixed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [runId, jobId, field, status, foundValue, storedValue, sourceVal, note, 1, 0]
+    );
+    logsWritten++;
+
+    if (autoApplied) {
+      console.log(`[audit] Auto-fixed job #${jobId} ${field} = "${foundValue}"`);
+    }
+  }
+
+  return logsWritten;
+}
+
+/**
  * POST /api/audit/run
  *
  * Run an LLM-powered audit. Reads un-audited jobs from DB, sends each job's
@@ -424,8 +541,8 @@ async function getLastAuditedId() {
  * Body: { full?: boolean }  — set full=true to re-audit everything
  *
  * This is the main audit endpoint used by:
- *   - The standalone audit.js CLI wrapper
- *   - The server's internal scheduler
+ *   - The auditSingleJob() function (auto-audit on new job save)
+ *   - Manual curl /api/audit/run calls
  *   - The resolve skill (after fixing extraction code)
  */
 app.post("/api/audit/run", async (req, res) => {
@@ -436,8 +553,7 @@ app.post("/api/audit/run", async (req, res) => {
 
     const forceFull = req.body?.full === true;
     const lastId = forceFull ? 0 : await getLastAuditedId();
-    const { randomUUID } = await import("node:crypto");
-    const runId = randomUUID();
+    const runId = crypto.randomUUID();
 
     // Count new jobs
     const countResult = await query(
@@ -472,101 +588,10 @@ app.post("/api/audit/run", async (req, res) => {
       jobsChecked++;
 
       console.log(`[audit] Checking job #${id}...`);
-
-      // Send raw HTML to Pi for extraction
-      let extracted = {};
-      try {
-        extracted = await piClient.extractFromRawHtml(row.raw_html || "");
-      } catch (err) {
-        console.error(`[audit] Pi extraction failed for job #${id}:`, err.message);
-        // Continue with empty extraction — will show as "not found" gaps
-      }
-
-      // Compare against DB values
-      const stored = {
-        company: row.company,
-        title: row.title,
-        location: row.location,
-        deadline: row.deadline,
-        role_type: row.role_type,
-        job_id: row.job_id,
-      };
-
-      const fields = ["company", "title", "location", "deadline", "role_type", "job_id"];
-
-      const allowedAutoFields = ["company", "title", "location", "deadline", "role_type", "job_id"];
-
-      for (const field of fields) {
-        const storedVal = stored[field];
-        const foundVal = extracted[field];
-
-        let status, foundValue, storedValue, note;
-        const sourceVal = "llm";
-        let autoApplied = false;
-
-        if (foundVal !== undefined && foundVal !== null && (storedVal === null || storedVal === undefined)) {
-          status = "missing";
-          foundValue = String(foundVal);
-          storedValue = "null";
-          note = `Pi found "${foundVal}" in raw HTML but DB has null`;
-          // Auto-apply the value to the job's DB field
-          if (allowedAutoFields.includes(field)) {
-            autoApplied = true;
-          }
-        } else if (foundVal !== undefined && foundVal !== null && storedVal !== null && String(foundVal).toLowerCase() !== String(storedVal).toLowerCase()) {
-          status = "mismatch";
-          foundValue = String(foundVal);
-          storedValue = String(storedVal);
-          note = `Pi found "${foundVal}" in raw HTML but DB has "${storedVal}"`;
-          // Auto-apply — Pi's value is likely more correct (from raw HTML)
-          if (allowedAutoFields.includes(field)) {
-            autoApplied = true;
-          }
-        } else if (foundVal !== undefined && foundVal !== null && storedVal !== null) {
-          status = "ok";
-          foundValue = String(foundVal);
-          storedValue = String(storedVal);
-          note = `"${foundVal}" matches (Pi)`;
-        } else {
-          status = "na";
-          foundValue = null;
-          storedValue = storedVal !== null ? String(storedVal) : "null";
-          note = "Pi could not find this field in the raw HTML";
-        }
-
-        // Dedup: skip if same (job_id, field, status, extraction_not_fixed) already exists
-        const existing = await query(
-          "SELECT id FROM audit_logs WHERE job_id = ? AND field = ? AND status = ? AND extraction_fixed = 0 LIMIT 1",
-          [id, field, status]
-        );
-        if (existing.rows[0]) continue;
-
-        // Auto-apply: update the job's field with the found value
-        if (autoApplied) {
-          const updateData = {};
-          updateData[field] = foundValue;
-          try {
-            await updateJob(id, updateData);
-          } catch (err) {
-            console.error(`[audit] Failed to auto-apply ${field} for job #${id}: ${err.message}`);
-          }
-        }
-
-        // Insert with resolved=1 (data patched) and extraction_fixed=0 (code still needs fix)
-        await query(
-          "INSERT INTO audit_logs (run_id, job_id, field, status, found_value, stored_value, source, note, resolved, extraction_fixed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [runId, id, field, status, foundValue, storedValue, sourceVal, note, 1, 0]
-        );
-        totalLogs++;
-
-        if (autoApplied) {
-          console.log(`[audit] Auto-fixed job #${id} ${field} = "${foundValue}"`);
-        }
-      }
+      const written = await auditSingleJob(id, runId);
+      totalLogs += written;
     }
 
-    // Update state
-      // lastAuditedId tracked via audit_logs table
     console.log(`[audit] Done: checked ${jobsChecked} job(s), wrote ${totalLogs} log(s), run=${runId}`);
 
     res.json({
@@ -640,64 +665,13 @@ async function main() {
       console.log(`[server]   POST /api/audit/run  — Run LLM-powered audit`);
       console.log(`[server]   GET  /api/health     — Health check`);
       console.log(`[server]`);
-      console.log(`[server] Audit scheduler: running every 6 hours (first run in 5 min)`);
-
-      // Schedule periodic audit
-      scheduleAudit();
+      console.log(`[server] Audits run automatically on each new job save.`);
+      console.log(`[server] Manual: POST /api/audit/run   Full re-check: {"full": true}`);
     });
   } catch (err) {
     console.error("[server] Fatal startup error:", err);
     process.exit(1);
   }
-}
-
-/**
- * Run the audit via the internal POST /api/audit/run endpoint.
- */
-async function runAudit() {
-  if (!piClient || !piClient.ready) {
-    console.log(`[audit] Skipping — Pi client not ready`);
-    return;
-  }
-
-  console.log(`[audit] Starting scheduled audit...`);
-
-  try {
-    const res = await fetch(`http://localhost:${PORT}/api/audit/run`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ full: false }),
-    });
-
-    if (!res.ok) {
-      console.error(`[audit] Server returned ${res.status}`);
-      return;
-    }
-
-    const result = await res.json();
-
-    if (result.status === "no_new_jobs") {
-      console.log(`[audit] No new jobs to audit (last: ${result.lastAuditedId})`);
-    } else if (result.status === "ok") {
-      console.log(`[audit] Checked ${result.jobsChecked} job(s), wrote ${result.logsWritten} log(s), run=${result.runId?.substring(0, 8)}...`);
-    }
-  } catch (err) {
-    console.error(`[audit] Failed: ${err.message}`);
-  }
-}
-
-/**
- * Schedule periodic audit runs.
- * Runs once after 5 minutes, then every 6 hours.
- */
-function scheduleAudit() {
-  const INTERVAL_MS = 6 * 60 * 60 * 1000;  // 6 hours
-  const FIRST_DELAY_MS = 5 * 60 * 1000;     // 5 minutes
-
-  setTimeout(() => {
-    runAudit();
-    setInterval(runAudit, INTERVAL_MS);
-  }, FIRST_DELAY_MS);
 }
 
 main();
