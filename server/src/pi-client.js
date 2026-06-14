@@ -274,6 +274,48 @@ ${markdown}`;
   }
 
   /**
+   * Extract structured job info from RAW HTML (for audit purposes).
+   * Unlike extractJobInfo, this sends the FULL raw HTML to Pi without
+   * going through Readability — so Pi sees JSON-LD, meta tags, everything.
+   *
+   * Truncates to 100K chars to stay within token limits.
+   */
+  async extractFromRawHtml(rawHtml) {
+    const MAX_HTML_LENGTH = 100_000;
+    const html = rawHtml.length > MAX_HTML_LENGTH
+      ? rawHtml.slice(0, MAX_HTML_LENGTH) + "\n\n[... truncated ...]"
+      : rawHtml;
+
+    const promptText = `You are auditing a job posting extraction pipeline.
+Below is the RAW HTML of a job posting page. Extract these fields from it.
+
+Rules:
+- Look in JSON-LD (<script type="application/ld+json">), meta tags, visible text, microdata
+- employmentType values: FULL_TIME → "Full-time", PART_TIME → "Part-time", CONTRACTOR → "Contract"
+- For location: combine addressLocality, addressRegion, addressCountry if available
+- For job_id: look in identifier.value, requisition-id, or similar
+- If a field is genuinely not present, set it to null
+
+Return ONLY valid JSON:
+{
+  "company": string | null,
+  "title": string | null,
+  "location": string | null,
+  "deadline": string | null,
+  "role_type": string | null,
+  "job_id": string | null
+}
+
+RAW HTML:
+\`\`\`html
+${html}
+\`\`\``;
+
+    const agentEndMsg = await this.prompt(promptText);
+    return this._parseAgentResponse(agentEndMsg);
+  }
+
+  /**
    * Parse the agent_end message to extract the structured JSON from the assistant's text.
    */
   _parseAgentResponse(agentEndMsg) {

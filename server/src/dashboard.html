@@ -487,6 +487,107 @@
     }
 
     /* ── Footer ── */
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .tab-btn {
+      background: #1a1a2e;
+      border: 1px solid #2a2a4e;
+      color: #8080a0;
+      padding: 8px 20px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+    .tab-btn:hover { background: #2a2a4e; color: #c0c0e0; }
+    .tab-btn.active {
+      background: #3a3a6e;
+      border-color: #5050a0;
+      color: #e0e0ff;
+    }
+    .badge {
+      background: #e05050;
+      color: white;
+      border-radius: 10px;
+      padding: 1px 7px;
+      font-size: 11px;
+      margin-left: 4px;
+    }
+    .audit-section { display: none; }
+    .audit-section.active { display: block; }
+    .jobs-section { display: block; }
+    .jobs-section.hidden { display: none; }
+    .audit-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .audit-table th { text-align: left; padding: 10px 8px; border-bottom: 2px solid #2a2a4e; color: #8080a0; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .audit-table td { padding: 10px 8px; border-bottom: 1px solid #1a1a2e; }
+    .audit-table tr:hover td { background: rgba(80,80,160,0.05); }
+    .status-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .status-badge.missing { background: rgba(224,80,80,0.2); color: #ff8080; }
+    .status-badge.ok { background: rgba(80,200,120,0.2); color: #80d0a0; }
+    .status-badge.na { background: rgba(128,128,160,0.2); color: #8080a0; }
+    .status-badge.mismatch { background: rgba(224,160,80,0.2); color: #ffb080; }
+    .btn-resolve {
+      padding: 3px 10px;
+      font-size: 11px;
+      border-radius: 6px;
+      border: 1px solid #2a2a4e;
+      background: #1a1a2e;
+      color: #8080a0;
+      cursor: pointer;
+    }
+    .btn-resolve:hover { background: #3a3a5e; color: #c0c0e0; }
+    .filter-row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .filter-row select, .filter-row input {
+      background: #1a1a2e;
+      border: 1px solid #2a2a4e;
+      color: #c0c0e0;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .filter-row select option { background: #1a1a2e; }
+    .audit-stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .audit-stat-card {
+      background: #16162a;
+      border: 1px solid #2a2a4e;
+      border-radius: 10px;
+      padding: 14px;
+      text-align: center;
+    }
+    .audit-stat-card .value { font-size: 24px; font-weight: 700; }
+    .audit-stat-card .label { font-size: 11px; color: #8080a0; margin-top: 4px; }
+    .audit-stat-card .value.missing { color: #ff8080; }
+    .audit-stat-card .value.ok { color: #80d0a0; }
+    .audit-stat-card .value.total { color: #8080e0; }
+    .source-tag {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      background: #2a2a4e;
+      color: #8080a0;
+    }
+
     .footer {
       text-align: center;
       padding: 24px;
@@ -513,6 +614,10 @@
       🔍 SimpleSeek
       <span>Job Application Tracker</span>
     </h1>
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="jobs" onclick="switchTab('jobs')">📋 Jobs</button>
+      <button class="tab-btn" data-tab="audit" onclick="switchTab('audit')">🔍 Audit <span id="auditBadge" class="badge" style="display:none"></span></button>
+    </div>
     <div class="header-stats">
       <div class="stat">
         <div class="stat-value new" id="totalJobs">0</div>
@@ -521,54 +626,111 @@
     </div>
   </div>
 
-  <!-- ─── Controls ─── -->
-  <div class="controls">
-    <input
-      type="text"
-      class="search-box"
-      id="searchInput"
-      placeholder="Search by company, title, or location..."
-    />
-    <button class="btn btn-danger-outline btn-delete-selected" id="deleteSelectedBtn">🗑️ Delete Selected (<span id="selectedCount">0</span>)</button>
-    <button class="btn btn-primary" id="refreshBtn">⟳ Refresh</button>
+  <!-- ─── JOBS SECTION ─── -->
+  <div class="jobs-section" id="jobsSection">
+    <div class="controls">
+      <input
+        type="text"
+        class="search-box"
+        id="searchInput"
+        placeholder="Search by company, title, or location..."
+      />
+      <button class="btn btn-danger-outline btn-delete-selected" id="deleteSelectedBtn">🗑️ Delete Selected (<span id="selectedCount">0</span>)</button>
+      <button class="btn btn-primary" id="refreshBtn">⟳ Refresh</button>
+    </div>
+
+    <div class="table-container">
+      <div class="loading-state" id="loadingState">
+        <div class="spinner"></div>
+        <p>Loading jobs...</p>
+      </div>
+
+      <div class="empty-state" id="emptyState" style="display:none">
+        <div class="icon">📋</div>
+        <h2>No jobs tracked yet</h2>
+        <p>Use the Chrome extension to check jobs — they'll appear here automatically.</p>
+        <br>
+        <button class="btn btn-primary" onclick="window.location.reload()">⟳ Refresh</button>
+      </div>
+
+      <table id="jobsTable" style="display:none">
+        <thead>
+          <tr>
+            <th class="checkbox-col"><input type="checkbox" id="selectAll" onchange="toggleSelectAll()" /></th>
+            <th style="width:28%">Job</th>
+            <th style="width:13%">Company</th>
+            <th style="width:13%">Location</th>
+            <th style="width:10%">Type</th>
+            <th style="width:8%">Deadline</th>
+            <th style="width:8%">Status</th>
+            <th style="width:8%">Applied</th>
+            <th style="width:80px">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="jobsBody"></tbody>
+      </table>
+
+      <div class="pagination" id="pagination" style="display:none">
+        <button class="btn btn-secondary" id="prevBtn">← Previous</button>
+        <span id="pageInfo">Page 1</span>
+        <button class="btn btn-secondary" id="nextBtn">Next →</button>
+      </div>
+    </div>
   </div>
 
-  <!-- ─── Table ─── -->
-  <div class="table-container">
-    <div class="loading-state" id="loadingState">
-      <div class="spinner"></div>
-      <p>Loading jobs...</p>
+  <!-- ─── AUDIT SECTION ─── -->
+  <div class="audit-section" id="auditSection">
+    <div class="filter-row">
+      <select id="auditFieldFilter" onchange="loadAuditLogs()">
+        <option value="">All Fields</option>
+        <option value="company">Company</option>
+        <option value="title">Title</option>
+        <option value="location">Location</option>
+        <option value="deadline">Deadline</option>
+        <option value="role_type">Role Type</option>
+        <option value="job_id">Job ID</option>
+      </select>
+      <select id="auditStatusFilter" onchange="loadAuditLogs()">
+        <option value="">All Statuses</option>
+        <option value="missing">Missing</option>
+        <option value="ok">OK</option>
+        <option value="mismatch">Mismatch</option>
+        <option value="na">N/A</option>
+      </select>
+      <select id="auditExtractionFilter" onchange="loadAuditLogs()">
+        <option value="0">Extraction Issues</option>
+        <option value="">All</option>
+        <option value="1">Extraction Fixed</option>
+      </select>
+      <button class="btn btn-primary" onclick="loadAuditLogs()">⟳ Refresh</button>
     </div>
 
-    <div class="empty-state" id="emptyState" style="display:none">
-      <div class="icon">📋</div>
-      <h2>No jobs tracked yet</h2>
-      <p>Use the Chrome extension to check jobs — they'll appear here automatically.</p>
-      <br>
-      <button class="btn btn-primary" onclick="window.location.reload()">⟳ Refresh</button>
-    </div>
+    <div class="audit-stats-grid" id="auditStatsGrid"></div>
 
-    <table id="jobsTable" style="display:none">
-      <thead>
-        <tr>
-          <th class="checkbox-col"><input type="checkbox" id="selectAll" onchange="toggleSelectAll()" /></th>
-          <th style="width:28%">Job</th>
-          <th style="width:13%">Company</th>
-          <th style="width:13%">Location</th>
-          <th style="width:10%">Type</th>
-          <th style="width:8%">Deadline</th>
-          <th style="width:8%">Status</th>
-          <th style="width:8%">Applied</th>
-          <th style="width:80px">Actions</th>
-        </tr>
-      </thead>
-      <tbody id="jobsBody"></tbody>
-    </table>
-
-    <div class="pagination" id="pagination" style="display:none">
-      <button class="btn btn-secondary" id="prevBtn">← Previous</button>
-      <span id="pageInfo">Page 1</span>
-      <button class="btn btn-secondary" id="nextBtn">Next →</button>
+    <div class="table-container">
+      <div class="loading-state" id="auditLoadingState">
+        <div class="spinner"></div>
+        <p>Loading audit logs...</p>
+      </div>
+      <div class="empty-state" id="auditEmptyState" style="display:none">
+        <div class="icon">✅</div>
+        <h2>No gaps found</h2>
+        <p>All audited jobs have complete extraction data.</p>
+      </div>
+      <table class="audit-table" id="auditTable" style="display:none">
+        <thead>
+          <tr>
+            <th>Job</th>
+            <th>Field</th>
+            <th>Status</th>
+            <th>Found in HTML</th>
+            <th>Stored in DB</th>
+            <th>Source</th>
+            <th>Extraction</th>
+          </tr>
+        </thead>
+        <tbody id="auditBody"></tbody>
+      </table>
     </div>
   </div>
 
@@ -577,6 +739,8 @@
     <a href="/api/health" style="color:#5050a0;text-decoration:none;" target="_blank">Server Status</a>
     &middot;
     <a href="/api/jobs" style="color:#5050a0;text-decoration:none;" target="_blank">Raw API</a>
+    &middot;
+    <a href="/api/audit" style="color:#5050a0;text-decoration:none;" target="_blank">Audit API</a>
   </div>
 
   <!-- ─── Edit Modal ─────────────────────────────────────────────────── -->
@@ -963,6 +1127,155 @@
         if ($("deleteModal").classList.contains("active")) closeDeleteModal();
       }
     });
+
+    // ─── Tab Switching ──────────────────────────────────────────────────────
+    function switchTab(tab) {
+      document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+      document.querySelector(`.tab-btn[data-tab="${tab}"]`).classList.add("active");
+
+      if (tab === "jobs") {
+        $("jobsSection").classList.remove("hidden");
+        $("auditSection").classList.remove("active");
+      } else {
+        $("jobsSection").classList.add("hidden");
+        $("auditSection").classList.add("active");
+        loadAuditLogs();
+      }
+    }
+
+    // ─── Audit Functions ─────────────────────────────────────────────────────
+    async function loadAuditLogs() {
+      const field = $("auditFieldFilter").value;
+      const status = $("auditStatusFilter").value;
+      const extractionFixed = $("auditExtractionFilter").value;
+
+      // Build URL with filters
+      const params = new URLSearchParams({ limit: 200 });
+      if (field) params.set("field", field);
+      if (status) params.set("status", status);
+      if (extractionFixed !== "") params.set("extraction_fixed", extractionFixed);
+
+      $("auditLoadingState").style.display = "block";
+      $("auditTable").style.display = "none";
+      $("auditEmptyState").style.display = "none";
+
+      try {
+        // Fetch logs and stats in parallel
+        const [logsRes, statsRes] = await Promise.all([
+          fetch("/api/audit?" + params.toString()),
+          fetch("/api/audit/stats"),
+        ]);
+        const logsData = await logsRes.json();
+        const stats = await statsRes.json();
+
+        $("auditLoadingState").style.display = "none";
+
+        // Update stats grid
+        renderAuditStats(stats);
+
+        // Update badge on tab
+        const badge = $("auditBadge");
+        if (stats.extractionIssues > 0) {
+          badge.textContent = stats.extractionIssues;
+          badge.style.display = "inline";
+        } else {
+          badge.style.display = "none";
+        }
+
+        const logs = logsData.logs || [];
+
+        if (logs.length === 0) {
+          $("auditTable").style.display = "none";
+          $("auditEmptyState").style.display = "block";
+          return;
+        }
+
+        $("auditEmptyState").style.display = "none";
+        $("auditTable").style.display = "table";
+
+        $("auditBody").innerHTML = logs.map(renderAuditRow).join("");
+      } catch (err) {
+        $("auditLoadingState").innerHTML = `
+          <p style="color:#F44336">❌ Failed to load audit logs</p>
+          <p style="font-size:13px;color:#606080">${err.message}</p>
+          <br>
+          <button class="btn btn-primary" onclick="loadAuditLogs()">Retry</button>
+        `;
+      }
+    }
+
+    function renderAuditStats(stats) {
+      const grid = $("auditStatsGrid");
+      const gapCount = stats.byStatus
+        ? stats.byStatus.filter(s => s.status === "missing" || s.status === "mismatch").reduce((sum, s) => sum + Number(s.cnt), 0)
+        : 0;
+      const okCount = stats.byStatus
+        ? stats.byStatus.filter(s => s.status === "ok").reduce((sum, s) => sum + Number(s.cnt), 0)
+        : 0;
+
+      grid.innerHTML = `
+        <div class="audit-stat-card">
+          <div class="value missing">${stats.extractionIssues}</div>
+          <div class="label">Extraction Issues</div>
+        </div>
+        <div class="audit-stat-card">
+          <div class="value ok">${okCount}</div>
+          <div class="label">OK Fields</div>
+        </div>
+        <div class="audit-stat-card">
+          <div class="value total">${stats.totalLogs}</div>
+          <div class="label">Total Checks</div>
+        </div>
+      `;
+    }
+
+    function renderAuditRow(log) {
+      const statusClass = log.status;
+      const statusLabels = { missing: "Missing", ok: "OK", na: "N/A", mismatch: "Mismatch" };
+      const jobLabel = log.job_title
+        ? escapeHtml(log.job_title) + " at " + escapeHtml(log.job_company || "?")
+        : "Job #" + log.job_id + " (deleted)";
+      const sourceHtml = log.source ? `<span class="source-tag">${escapeHtml(log.source)}</span>` : "—";
+
+      // Show extraction fix status
+      let extractionStatus;
+      if (log.status === "ok" || log.status === "na") {
+        extractionStatus = "—";
+      } else if (log.extraction_fixed === 1) {
+        extractionStatus = `<span style="color:#4CAF50">✅ Fixed</span>`;
+      } else {
+        extractionStatus = `<span style="color:#FF9800">⚠️ Needs fix</span>`;
+      }
+
+      return `
+        <tr>
+          <td><a href="/api/jobs/${log.job_id}" style="color:#8080e0;text-decoration:none;" title="Job #${log.job_id}">${jobLabel}</a></td>
+          <td><code>${escapeHtml(log.field)}</code></td>
+          <td><span class="status-badge ${statusClass}">${statusLabels[log.status] || log.status}</span></td>
+          <td style="color:#c0c0e0;font-size:12px">${escapeHtml(log.found_value || "—")}</td>
+          <td style="color:#8080a0;font-size:12px">${escapeHtml(log.stored_value || "—")}</td>
+          <td>${sourceHtml}</td>
+          <td>${extractionStatus}</td>
+        </tr>
+      `;
+    }
+
+    async function markExtractionFixed(id) {
+      if (!confirm("Mark extraction code as fixed for this entry?")) return;
+      try {
+        const res = await fetch("/api/audit/" + id + "/mark-extraction-fixed", { method: "PUT" });
+        if (!res.ok) {
+          const err = await res.json();
+          alert("Failed: " + (err.message || res.statusText));
+          return;
+        }
+        loadAuditLogs();
+      } catch (err) {
+        alert("Network error: " + err.message);
+      }
+    }
+
+
 
     // ─── Events ──────────────────────────────────────────────────────────
 

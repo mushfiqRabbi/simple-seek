@@ -207,10 +207,49 @@ Delete a single job entry.
 
 Server health check.
 
+### `GET /api/audit`
+
+List audit logs with optional filters.
+
+**Query parameters:** `?field=role_type&status=missing&extraction_fixed=0&limit=50&offset=0`
+
+### `GET /api/audit/stats`
+
+Audit statistics — extraction issues count, breakdown by status, etc.
+
+### `GET /api/audit/unresolved`
+
+All logs where `extraction_fixed=0` (extraction code still needs fixing) — for the resolve skill.
+
+### `PUT /api/audit/:id/resolve`
+
+Mark an audit log as resolved (data acknowledged).
+
+### `PUT /api/audit/:id/apply`
+
+Apply an audit log's found value to the job's DB field and mark resolved.
+
+### `PUT /api/audit/:id/mark-extraction-fixed`
+
+Mark that the extraction pipeline code has been fixed for this audit log (used by resolve skill).
+
+### `POST /api/audit/run`
+
+Run an LLM-powered audit. Sends each job's raw HTML to Pi for extraction, compares against stored DB values, auto-applies any missing data, and writes audit logs.
+
+**Request:**
+```json
+{
+  "full": true
+}
+```
+- `full: true` — re-audit all jobs (default: only new/un-audited jobs)
+
 ## Dashboard
 
-The dashboard is served at `http://localhost:3001/` (also `/dashboard`). It's a single-page HTML app with:
+The dashboard is served at `http://localhost:3001/` (also `/dashboard`). It's a single-page HTML app with two tabs:
 
+### Jobs Tab
 - **Search** — Filter jobs by company, title, or location
 - **Edit** — Click ✏️ on any row to update fields (status, dates, notes)
 - **Delete single** — Remove a job with confirmation prompt
@@ -220,6 +259,12 @@ The dashboard is served at `http://localhost:3001/` (also `/dashboard`). It's a 
 - **Dark theme** — Easy on the eyes
 - **Auto-refresh** — Updates every 60 seconds
 
+### Audit Tab
+- **Stats cards** — Shows Extraction Issues count, OK fields, total checks
+- **Filters** — Filter by field, status, or extraction fix status
+- **Table** — Lists each audited field per job with status, found value, stored value, and extraction fix status
+- **Badge** — Tab shows the number of extraction issues that need code fixes
+
 ## Project Structure
 
 ```
@@ -228,14 +273,15 @@ The dashboard is served at `http://localhost:3001/` (also `/dashboard`). It's a 
 │   ├── package-lock.json
 │   ├── .env                         # Turso credentials + Pi config (gitignored)
 │   ├── .env.example                 # Environment template (no secrets)
+│   ├── audit-state.json             # Tracked: last audited job ID
 │   └── src/
-│       ├── index.js                 # Express app entry, routes
+│       ├── index.js                 # Express app entry, routes, audit scheduler
 │       ├── db.js                    # Turso client + CRUD queries
 │       ├── pi-client.js             # Pi RPC subprocess manager
 │       ├── extractor.js             # HTML→Markdown→Pi extraction pipeline
 │       ├── dedup.js                 # Duplicate matching logic
-│       ├── dashboard.html           # Web dashboard (single-file)
-│       └── schema.sql               # Database schema
+│       ├── dashboard.html           # Web dashboard (single-file, Jobs + Audit tabs)
+│       └── schema.sql               # Database schema (jobs + audit_logs tables)
 ├── extension/
 │   ├── manifest.json                # Chrome extension manifest (MV3)
 │   ├── background.js                # Service worker (context menu + API calls)
@@ -243,6 +289,13 @@ The dashboard is served at `http://localhost:3001/` (also `/dashboard`). It's a 
 │   ├── popup.html                   # Extension popup
 │   ├── popup.js                     # Popup logic
 │   └── icons/                       # Extension icons
+├── .pi/
+│   └── skills/
+│       └── simple-seek-resolve/     # Resolve skill: analyzes gaps, fixes extraction code
+│           ├── SKILL.md
+│           └── scripts/
+│               └── resolve.js       # Helper: fetches unresolved audit logs
+├── plans/                           # Design docs (gitignored)
 ├── Dockerfile                  # Docker image (Node 24 + Pi CLI)
 ├── docker-compose.yml          # One-command deploy with Docker
 ├── .gitignore
@@ -261,6 +314,55 @@ The dashboard is served at `http://localhost:3001/` (also `/dashboard`). It's a 
 3. **Storage** — New jobs (via **Apply**) are saved with all extracted metadata plus the original HTML and markdown for future re-analysis.
 
 This approach is cheaper, faster, and more reliable than asking the AI to compare two jobs directly.
+
+## How the Audit System Works
+
+The audit system checks whether the extraction pipeline missed any data by comparing what Pi finds in the **raw HTML** against what was actually stored in the database.
+
+### Flow
+
+1. **Trigger** — Audit runs via:
+   - Manual: `curl -X POST http://localhost:3001/api/audit/run`
+   - Scheduler: Every 6 hours automatically
+   - Full re-check: `{"full": true}` in the request body
+
+2. **LLM extraction** — For each job, the **full raw HTML** is sent to Pi. Unlike the initial extraction (which goes through Readability and loses `<head>`), this gives Pi access to everything: JSON-LD, meta tags, microdata, visible text, any format.
+
+3. **Comparison** — Pi's extracted fields are compared against the database. For each field:
+   - **Missing** — Pi found data, DB has null → GAP
+   - **Mismatch** — Pi found different data than DB → GAP
+   - **Ok** — Both match
+   - **N/A** — Neither has data
+
+4. **Auto-apply** — When a gap is found, the value is **automatically written** to the job's DB field. The data is patched immediately — no manual step needed.
+
+5. **Audit log** — Each field check is written to the `audit_logs` table with:
+   - `resolved = 1` — data was auto-patched
+   - `extraction_fixed = 0` — the extraction code still has a bug that needs fixing
+
+6. **Dashboard** — Shows the number of extraction issues. These are gaps where data was patched but the code fix hasn't been applied yet.
+
+### Resolve Skill
+
+The `simple-seek-resolve` skill helps fix the root cause:
+
+1. Fetch unresolved logs: `curl -s http://localhost:3001/api/audit/unresolved`
+2. Group gaps by field to identify patterns
+3. Read the extraction code: `cat server/src/extractor.js`
+4. Analyze why the data was missed (e.g., JSON-LD in `<head>` stripped by Readability)
+5. Propose and implement a fix to the extraction pipeline
+6. Mark extraction as fixed: `curl -X PUT http://localhost:3001/api/audit/:id/mark-extraction-fixed`
+7. Re-run audit to confirm: `curl -X POST http://localhost:3001/api/audit/run -d '{"full": true}'`
+
+### Key Design
+
+| Decision | Why |
+|---|---|
+| **Audit uses Pi/LLM, not regex** | Catches any HTML format — regex has blind spots |
+| **Auto-apply on audit** | Data patched immediately, no manual apply button |
+| **Two fix states** | `resolved` = data patched, `extraction_fixed` = code fixed |
+| **Raw HTML preserved** | Enables re-extraction by Pi during audit |
+| **Dedup** | Re-running audit won't create duplicate rows for same unfixed bug |
 
 ## Database
 
@@ -281,6 +383,27 @@ Query your data from any device:
 ```bash
 turso db shell simpleseek -- "SELECT company, title, status FROM jobs;"
 ```
+
+## Resolve Skill
+
+The `simple-seek-resolve` skill helps analyze and fix extraction gaps found by the audit system.
+
+```bash
+# Invoke the skill
+pi --skill .pi/skills/simple-seek-resolve --print "analyze gaps and propose fixes"
+
+# Or run the helper directly
+cd /home/mushfiq/garage/build/simple-seek && node .pi/skills/simple-seek-resolve/scripts/resolve.js
+```
+
+The skill:
+1. Fetches unresolved audit logs from the API
+2. Groups gaps by field to identify patterns
+3. Reads the extraction code to find root causes
+4. Proposes a fix plan to the user
+5. After approval, implements the code fix
+6. Marks extraction as fixed via API
+7. Re-runs audit to confirm
 
 ## Environment Variables
 

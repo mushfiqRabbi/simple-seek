@@ -72,6 +72,8 @@ async function query(sql, args = []) {
   return db.execute({ sql, args });
 }
 
+export { query };
+
 /**
  * Insert a new job record.
  * Returns the inserted job row.
@@ -182,7 +184,7 @@ export async function updateJobStatus(id, status) {
  * Returns the updated job row.
  */
 export async function updateJob(id, fields) {
-  const allowed = ["status", "company", "title", "location", "deadline", "role_type", "summary"];
+  const allowed = ["status", "company", "title", "location", "deadline", "role_type", "summary", "job_id"];
   const updates = [];
   const values = [];
 
@@ -218,4 +220,205 @@ export async function deleteJob(id) {
 export async function getJobCount() {
   const result = await query("SELECT COUNT(*) as count FROM jobs");
   return Number(result.rows[0]?.count ?? 0);
+}
+
+// ─── Audit Log Functions ───────────────────────────────────────────────────
+
+/**
+ * Batch insert audit log entries.
+ * Skips duplicates: identical (job_id, field, status, resolved=0) rows are not inserted.
+ *
+ * @param {Array<{run_id, job_id, field, status, found_value?, stored_value?, source?, note?}>} logs
+ * @returns {Promise<number>} Number of new rows inserted
+ */
+export async function insertAuditLogs(logs) {
+  if (!logs || logs.length === 0) return 0;
+
+  let inserted = 0;
+  for (const log of logs) {
+    // Skip if identical unresolved entry already exists
+    const existing = await query(
+      `SELECT id FROM audit_logs WHERE job_id = ? AND field = ? AND status = ? AND resolved = 0 LIMIT 1`,
+      [log.job_id, log.field, log.status]
+    );
+    if (existing.rows[0]) continue;
+
+    await query(
+      `INSERT INTO audit_logs (run_id, job_id, field, status, found_value, stored_value, source, note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        log.run_id,
+        log.job_id,
+        log.field,
+        log.status,
+        log.found_value ?? null,
+        log.stored_value ?? null,
+        log.source ?? null,
+        log.note ?? null,
+      ]
+    );
+    inserted++;
+  }
+
+  return inserted;
+}
+
+/**
+ * Get a single audit log by ID.
+ */
+export async function getAuditLogById(id) {
+  const result = await query(
+    `SELECT a.*, j.url as job_url, j.company as job_company, j.title as job_title
+     FROM audit_logs a
+     LEFT JOIN jobs j ON a.job_id = j.id
+     WHERE a.id = ?`,
+    [id]
+  );
+  return toPlain(result.rows[0]);
+}
+
+/**
+ * Get audit logs with optional filters.
+ */
+export async function getAuditLogs({ job_id, field, status, resolved, extraction_fixed, run_id, limit = 50, offset = 0 } = {}) {
+  const conditions = [];
+  const values = [];
+
+  if (job_id !== undefined) {
+    conditions.push("a.job_id = ?");
+    values.push(job_id);
+  }
+  if (field) {
+    conditions.push("a.field = ?");
+    values.push(field);
+  }
+  if (status) {
+    conditions.push("a.status = ?");
+    values.push(status);
+  }
+  if (resolved !== undefined) {
+    conditions.push("a.resolved = ?");
+    values.push(resolved);
+  }
+  if (extraction_fixed !== undefined) {
+    conditions.push("a.extraction_fixed = ?");
+    values.push(extraction_fixed);
+  }
+  if (run_id) {
+    conditions.push("a.run_id = ?");
+    values.push(run_id);
+  }
+
+  const where = conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
+
+  const result = await query(
+    `SELECT a.*, j.url as job_url, j.company as job_company, j.title as job_title
+     FROM audit_logs a
+     LEFT JOIN jobs j ON a.job_id = j.id
+     ${where}
+     ORDER BY a.created_at DESC
+     LIMIT ? OFFSET ?`,
+    [...values, limit, offset]
+  );
+
+  return result.rows.map(toPlain);
+}
+
+/**
+ * Get aggregate stats for audit logs (current run only by default).
+ */
+export async function getAuditStats() {
+  // Get the latest run_id
+  const latestRun = await query(
+    "SELECT run_id FROM audit_logs ORDER BY created_at DESC LIMIT 1"
+  );
+  const latestRunId = latestRun.rows[0]?.run_id ?? null;
+
+  // Stats for latest run
+  const byStatus = await query(
+    `SELECT field, status, COUNT(*) as cnt
+     FROM audit_logs
+     ${latestRunId ? "WHERE run_id = ?" : ""}
+     GROUP BY field, status
+     ORDER BY field, status`,
+    latestRunId ? [latestRunId] : []
+  );
+
+  // Extraction-fixed vs not-fixed counts
+  const byExtractionFixed = await query(
+    `SELECT field, extraction_fixed, COUNT(*) as cnt
+     FROM audit_logs
+     ${latestRunId ? "WHERE run_id = ?" : ""}
+     GROUP BY field, extraction_fixed
+     ORDER BY field`,
+    latestRunId ? [latestRunId] : []
+  );
+
+  // Total extraction issues (data was auto-fixed, but code still needs fixing)
+  const extractionIssues = await query(
+    "SELECT COUNT(*) as cnt FROM audit_logs WHERE extraction_fixed = 0 AND status IN ('missing', 'mismatch')"
+  );
+
+  const totalRows = await query(
+    `SELECT COUNT(*) as cnt FROM audit_logs`
+  );
+
+  return {
+    latestRunId,
+    totalLogs: Number(totalRows.rows[0]?.cnt ?? 0),
+    extractionIssues: Number(extractionIssues.rows[0]?.cnt ?? 0),
+    byStatus: byStatus.rows.map(toPlain),
+    byExtractionFixed: byExtractionFixed.rows.map(toPlain),
+  };
+}
+
+/**
+ * Mark an audit log entry as resolved.
+ * Returns the updated row or null if not found.
+ */
+export async function resolveAuditLog(id) {
+  const result = await query(
+    "UPDATE audit_logs SET resolved = 1 WHERE id = ?",
+    [id]
+  );
+  if (result.rowsAffected === 0) return null;
+
+  const selectResult = await query("SELECT * FROM audit_logs WHERE id = ?", [id]);
+  return toPlain(selectResult.rows[0]);
+}
+
+/**
+ * Get all unresolved audit logs (extraction not fixed), grouped by field, for the resolve skill.
+ */
+export async function getUnresolvedAuditLogs() {
+  const result = await query(
+    `SELECT a.*, j.url as job_url, j.company as job_company, j.title as job_title
+     FROM audit_logs a
+     LEFT JOIN jobs j ON a.job_id = j.id
+     WHERE a.extraction_fixed = 0 AND a.status IN ('missing', 'mismatch')
+     ORDER BY a.field, a.job_id`
+  );
+  return result.rows.map(toPlain);
+}
+
+/**
+ * Mark an audit log's extraction_fixed = 1 (called after resolve skill fixes extraction code).
+ */
+export async function markExtractionFixed(id) {
+  const result = await query(
+    "UPDATE audit_logs SET extraction_fixed = 1 WHERE id = ?",
+    [id]
+  );
+  if (result.rowsAffected === 0) return null;
+
+  const selectResult = await query("SELECT * FROM audit_logs WHERE id = ?", [id]);
+  return toPlain(selectResult.rows[0]);
+}
+
+/**
+ * Delete audit logs for a specific job (used when job is deleted).
+ */
+export async function deleteAuditLogsByJobId(jobId) {
+  const result = await query("DELETE FROM audit_logs WHERE job_id = ?", [jobId]);
+  return result.rowsAffected;
 }

@@ -16,8 +16,8 @@ import { initDatabase } from "./db.js";
 import { PiRPCClient } from "./pi-client.js";
 import { extractJobInfo } from "./extractor.js";
 import { checkDuplicate, saveNewJob } from "./dedup.js";
-import { getAllJobs, getJobCount, updateJob, deleteJob, getJobById } from "./db.js";
-import { readFileSync } from "node:fs";
+import { getAllJobs, getJobCount, updateJob, deleteJob, getJobById, getAuditLogs, getAuditStats, resolveAuditLog, getUnresolvedAuditLogs, deleteAuditLogsByJobId, getAuditLogById, markExtractionFixed, query } from "./db.js";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -214,10 +214,383 @@ app.delete("/api/jobs/:id", async (req, res) => {
       return res.status(404).json({ status: "error", message: "Job not found" });
     }
 
-    console.log(`[api] Deleted job ${id}`);
+    // Also clean up associated audit logs
+    const auditRemoved = await deleteAuditLogsByJobId(id);
+
+    console.log(`[api] Deleted job ${id} (also removed ${auditRemoved} audit log(s))`);
     res.json({ status: "ok", message: "Job deleted" });
   } catch (err) {
     console.error(`[api] Error deleting job:`, err);
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+// ─── Audit Routes ───────────────────────────────────────────────────────────-
+
+/**
+ * GET /api/audit
+ *
+ * List audit logs with optional filters.
+ * Query params: job_id, field, status, resolved, run_id, limit, offset
+ */
+app.get("/api/audit", async (req, res) => {
+  try {
+    const filters = {};
+    if (req.query.job_id) filters.job_id = parseInt(req.query.job_id);
+    if (req.query.field) filters.field = req.query.field;
+    if (req.query.status) filters.status = req.query.status;
+    if (req.query.resolved !== undefined) filters.resolved = parseInt(req.query.resolved);
+    if (req.query.extraction_fixed !== undefined) filters.extraction_fixed = parseInt(req.query.extraction_fixed);
+    if (req.query.run_id) filters.run_id = req.query.run_id;
+    filters.limit = parseInt(req.query.limit) || 50;
+    filters.offset = parseInt(req.query.offset) || 0;
+
+    const logs = await getAuditLogs(filters);
+    res.json({ logs, ...filters });
+  } catch (err) {
+    console.error(`[api] Error listing audit logs:`, err);
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+/**
+ * GET /api/audit/stats
+ *
+ * Aggregate audit statistics (open gaps by field, latest run info, etc.)
+ */
+app.get("/api/audit/stats", async (req, res) => {
+  try {
+    const stats = await getAuditStats();
+    res.json(stats);
+  } catch (err) {
+    console.error(`[api] Error getting audit stats:`, err);
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+/**
+ * GET /api/audit/unresolved
+ *
+ * Get all unresolved audit logs (for the resolve skill).
+ */
+app.get("/api/audit/unresolved", async (req, res) => {
+  try {
+    const logs = await getUnresolvedAuditLogs();
+    res.json({ logs });
+  } catch (err) {
+    console.error(`[api] Error getting unresolved audit logs:`, err);
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+/**
+ * PUT /api/audit/:id/resolve
+ *
+ * Mark an audit log entry as resolved (acknowledged only, no data change).
+ */
+app.put("/api/audit/:id/resolve", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ status: "error", message: "Invalid audit log ID" });
+    }
+
+    const updated = await resolveAuditLog(id);
+    if (!updated) {
+      return res.status(404).json({ status: "error", message: "Audit log not found" });
+    }
+
+    console.log(`[api] Resolved audit log ${id}`);
+    res.json({ status: "ok", log: updated });
+  } catch (err) {
+    console.error(`[api] Error resolving audit log:`, err);
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+/**
+ * PUT /api/audit/:id/apply
+ *
+ * Apply an audit log's found_value to the job's DB field, then mark resolved.
+ * This is what the resolve skill uses to fix missing data after improving
+ * the extraction pipeline.
+ *
+ * The body can optionally include a 'value' override. If not set, uses
+ * the audit log's found_value.
+ */
+app.put("/api/audit/:id/apply", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ status: "error", message: "Invalid audit log ID" });
+    }
+
+    // Fetch the audit log
+    const log = await getAuditLogById(id);
+    if (!log) {
+      return res.status(404).json({ status: "error", message: "Audit log not found" });
+    }
+
+    if (log.status !== "missing" && log.status !== "mismatch") {
+      return res.status(400).json({ status: "error", message: `Audit log status is "${log.status}", nothing to apply` });
+    }
+
+    if (log.resolved === 1) {
+      return res.status(400).json({ status: "error", message: "Audit log is already resolved" });
+    }
+
+    const field = log.field;
+    const value = req.body.value !== undefined ? req.body.value : log.found_value;
+
+    if (!value) {
+      return res.status(400).json({ status: "error", message: "No value to apply (found_value is null, provide a 'value' in request body)" });
+    }
+
+    const allowedFields = ["company", "title", "location", "deadline", "role_type", "summary", "job_id"];
+    if (!allowedFields.includes(field)) {
+      return res.status(400).json({ status: "error", message: `Field "${field}" cannot be updated directly. Fix the extraction code instead.` });
+    }
+
+    // Update the job's field
+    const jobId = log.job_id;
+    const updateData = {};
+    updateData[field] = value;
+
+    const job = await getJobById(jobId);
+    if (!job) {
+      return res.status(404).json({ status: "error", message: `Job #${jobId} not found (may have been deleted)` });
+    }
+
+    const updatedJob = await updateJob(jobId, updateData);
+
+    // Mark the audit log as resolved
+    await resolveAuditLog(id);
+
+    console.log(`[api] Applied fix: job #${jobId} ${field} = "${value}" (from audit log #${id})`);
+
+    res.json({
+      status: "ok",
+      message: `Job #${jobId} ${field} updated to "${value}"`,
+      job: updatedJob,
+      auditLogId: id,
+    });
+  } catch (err) {
+    console.error(`[api] Error applying audit log:`, err);
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+/**
+ * PUT /api/audit/:id/mark-extraction-fixed
+ *
+ * Mark that the extraction pipeline code has been fixed for this audit log.
+ * Called by the resolve skill after it implements the extraction code fix.
+ * The log should already have resolved=1 (data was auto-patched by audit).
+ */
+app.put("/api/audit/:id/mark-extraction-fixed", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ status: "error", message: "Invalid audit log ID" });
+    }
+
+    const updated = await markExtractionFixed(id);
+    if (!updated) {
+      return res.status(404).json({ status: "error", message: "Audit log not found" });
+    }
+
+    console.log(`[api] Marked extraction_fixed for audit log ${id}`);
+    res.json({ status: "ok", log: updated });
+  } catch (err) {
+    console.error(`[api] Error marking extraction fixed:`, err);
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+// ─── Audit State ────────────────────────────────────────────────────────────
+
+const AUDIT_STATE_FILE = join(__dirname, "audit-state.json");
+
+function readAuditState() {
+  try {
+    return JSON.parse(readFileSync(AUDIT_STATE_FILE, "utf8"));
+  } catch {
+    return { lastAuditedId: 0 };
+  }
+}
+
+function writeAuditState(state) {
+  writeFileSync(AUDIT_STATE_FILE, JSON.stringify(state, null, 2) + "\n");
+}
+
+/**
+ * POST /api/audit/run
+ *
+ * Run an LLM-powered audit. Reads un-audited jobs from DB, sends each job's
+ * raw HTML to Pi for extraction, compares against DB values, writes gaps
+ * to audit_logs, and updates the state file.
+ *
+ * Body: { full?: boolean }  — set full=true to re-audit everything
+ *
+ * This is the main audit endpoint used by:
+ *   - The standalone audit.js CLI wrapper
+ *   - The server's internal scheduler
+ *   - The resolve skill (after fixing extraction code)
+ */
+app.post("/api/audit/run", async (req, res) => {
+  try {
+    if (!piClient || !piClient.ready) {
+      return res.status(503).json({ status: "error", message: "Pi client not ready. Wait for Pi to connect and try again." });
+    }
+
+    const forceFull = req.body?.full === true;
+    const state = readAuditState();
+    const lastId = forceFull ? 0 : state.lastAuditedId;
+    const { randomUUID } = await import("node:crypto");
+    const runId = randomUUID();
+
+    // Count new jobs
+    const countResult = await query(
+      "SELECT COUNT(*) as cnt FROM jobs WHERE id > ?",
+      [lastId]
+    );
+    const newCount = Number(countResult.rows[0]?.cnt ?? 0);
+
+    if (newCount === 0) {
+      return res.json({
+        __audit_result__: true,
+        status: "no_new_jobs",
+        lastAuditedId: state.lastAuditedId,
+        forceFull,
+        message: "All jobs already audited. Use --full to re-audit everything.",
+      });
+    }
+
+    // Fetch new jobs (raw HTML needed for LLM extraction)
+    const jobsResult = await query(
+      "SELECT id, url, company, title, location, deadline, role_type, job_id, summary, raw_html FROM jobs WHERE id > ? ORDER BY id",
+      [lastId]
+    );
+
+    let maxId = lastId;
+    let totalLogs = 0;
+    let jobsChecked = 0;
+
+    for (const row of jobsResult.rows) {
+      const id = Number(row.id);
+      if (id > maxId) maxId = id;
+      jobsChecked++;
+
+      console.log(`[audit] Checking job #${id}...`);
+
+      // Send raw HTML to Pi for extraction
+      let extracted = {};
+      try {
+        extracted = await piClient.extractFromRawHtml(row.raw_html || "");
+      } catch (err) {
+        console.error(`[audit] Pi extraction failed for job #${id}:`, err.message);
+        // Continue with empty extraction — will show as "not found" gaps
+      }
+
+      // Compare against DB values
+      const stored = {
+        company: row.company,
+        title: row.title,
+        location: row.location,
+        deadline: row.deadline,
+        role_type: row.role_type,
+        job_id: row.job_id,
+      };
+
+      const fields = ["company", "title", "location", "deadline", "role_type", "job_id"];
+
+      const allowedAutoFields = ["company", "title", "location", "deadline", "role_type", "job_id"];
+
+      for (const field of fields) {
+        const storedVal = stored[field];
+        const foundVal = extracted[field];
+
+        let status, foundValue, storedValue, note;
+        const sourceVal = "llm";
+        let autoApplied = false;
+
+        if (foundVal !== undefined && foundVal !== null && (storedVal === null || storedVal === undefined)) {
+          status = "missing";
+          foundValue = String(foundVal);
+          storedValue = "null";
+          note = `Pi found "${foundVal}" in raw HTML but DB has null`;
+          // Auto-apply the value to the job's DB field
+          if (allowedAutoFields.includes(field)) {
+            autoApplied = true;
+          }
+        } else if (foundVal !== undefined && foundVal !== null && storedVal !== null && String(foundVal).toLowerCase() !== String(storedVal).toLowerCase()) {
+          status = "mismatch";
+          foundValue = String(foundVal);
+          storedValue = String(storedVal);
+          note = `Pi found "${foundVal}" in raw HTML but DB has "${storedVal}"`;
+          // Auto-apply — Pi's value is likely more correct (from raw HTML)
+          if (allowedAutoFields.includes(field)) {
+            autoApplied = true;
+          }
+        } else if (foundVal !== undefined && foundVal !== null && storedVal !== null) {
+          status = "ok";
+          foundValue = String(foundVal);
+          storedValue = String(storedVal);
+          note = `"${foundVal}" matches (Pi)`;
+        } else {
+          status = "na";
+          foundValue = null;
+          storedValue = storedVal !== null ? String(storedVal) : "null";
+          note = "Pi could not find this field in the raw HTML";
+        }
+
+        // Dedup: skip if same (job_id, field, status, extraction_not_fixed) already exists
+        const existing = await query(
+          "SELECT id FROM audit_logs WHERE job_id = ? AND field = ? AND status = ? AND extraction_fixed = 0 LIMIT 1",
+          [id, field, status]
+        );
+        if (existing.rows[0]) continue;
+
+        // Auto-apply: update the job's field with the found value
+        if (autoApplied) {
+          const updateData = {};
+          updateData[field] = foundValue;
+          try {
+            await updateJob(id, updateData);
+          } catch (err) {
+            console.error(`[audit] Failed to auto-apply ${field} for job #${id}: ${err.message}`);
+          }
+        }
+
+        // Insert with resolved=1 (data patched) and extraction_fixed=0 (code still needs fix)
+        await query(
+          "INSERT INTO audit_logs (run_id, job_id, field, status, found_value, stored_value, source, note, resolved, extraction_fixed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [runId, id, field, status, foundValue, storedValue, sourceVal, note, 1, 0]
+        );
+        totalLogs++;
+
+        if (autoApplied) {
+          console.log(`[audit] Auto-fixed job #${id} ${field} = "${foundValue}"`);
+        }
+      }
+    }
+
+    // Update state
+    writeAuditState({ lastAuditedId: maxId });
+
+    console.log(`[audit] Done: checked ${jobsChecked} job(s), wrote ${totalLogs} log(s), run=${runId}`);
+
+    res.json({
+      __audit_result__: true,
+      status: "ok",
+      runId,
+      jobsChecked,
+      logsWritten: totalLogs,
+      maxId,
+      lastAuditedId: maxId,
+    });
+  } catch (err) {
+    console.error(`[audit] Error running audit:`, err);
     res.status(500).json({ status: "error", message: err.message });
   }
 });
@@ -270,12 +643,72 @@ async function main() {
       console.log(`[server]   DELETE /api/jobs/:id  — Delete a job`);
       console.log(`[server]   GET  /               — Dashboard (this page)`);
       console.log(`[server]   GET  /dashboard      — Dashboard (alias)`);
+      console.log(`[server]   GET  /api/audit      — List audit logs`);
+      console.log(`[server]   GET  /api/audit/stats — Audit stats`);
+      console.log(`[server]   GET  /api/audit/unresolved — Unresolved audit logs`);
+      console.log(`[server]   PUT  /api/audit/:id/resolve — Resolve an audit log`);
+      console.log(`[server]   PUT  /api/audit/:id/mark-extraction-fixed — Mark extraction code fixed`);
+      console.log(`[server]   POST /api/audit/run  — Run LLM-powered audit`);
       console.log(`[server]   GET  /api/health     — Health check`);
+      console.log(`[server]`);
+      console.log(`[server] Audit scheduler: running every 6 hours (first run in 5 min)`);
+
+      // Schedule periodic audit
+      scheduleAudit();
     });
   } catch (err) {
     console.error("[server] Fatal startup error:", err);
     process.exit(1);
   }
+}
+
+/**
+ * Run the audit via the internal POST /api/audit/run endpoint.
+ */
+async function runAudit() {
+  if (!piClient || !piClient.ready) {
+    console.log(`[audit] Skipping — Pi client not ready`);
+    return;
+  }
+
+  console.log(`[audit] Starting scheduled audit...`);
+
+  try {
+    const res = await fetch(`http://localhost:${PORT}/api/audit/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ full: false }),
+    });
+
+    if (!res.ok) {
+      console.error(`[audit] Server returned ${res.status}`);
+      return;
+    }
+
+    const result = await res.json();
+
+    if (result.status === "no_new_jobs") {
+      console.log(`[audit] No new jobs to audit (last: ${result.lastAuditedId})`);
+    } else if (result.status === "ok") {
+      console.log(`[audit] Checked ${result.jobsChecked} job(s), wrote ${result.logsWritten} log(s), run=${result.runId?.substring(0, 8)}...`);
+    }
+  } catch (err) {
+    console.error(`[audit] Failed: ${err.message}`);
+  }
+}
+
+/**
+ * Schedule periodic audit runs.
+ * Runs once after 5 minutes, then every 6 hours.
+ */
+function scheduleAudit() {
+  const INTERVAL_MS = 6 * 60 * 60 * 1000;  // 6 hours
+  const FIRST_DELAY_MS = 5 * 60 * 1000;     // 5 minutes
+
+  setTimeout(() => {
+    runAudit();
+    setInterval(runAudit, INTERVAL_MS);
+  }, FIRST_DELAY_MS);
 }
 
 main();

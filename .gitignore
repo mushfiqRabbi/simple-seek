@@ -8,8 +8,13 @@ server/data/*.db-shm
 node_modules/
 
 # ── Pi agent local state ────────────────────────────
-.pi/
+.pi/*
+!.pi/skills/
+.pi/skills/*
+!.pi/skills/simple-seek-resolve/
+!.pi/skills/simple-seek-resolve/**
 server/.pi/
+server/audit-state.json
 
 # ── Environment (contains secrets) ───────────────────
 .env
