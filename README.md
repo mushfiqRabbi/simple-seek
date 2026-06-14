@@ -273,9 +273,8 @@ The dashboard is served at `http://localhost:3001/` (also `/dashboard`). It's a 
 │   ├── package-lock.json
 │   ├── .env                         # Turso credentials + Pi config (gitignored)
 │   ├── .env.example                 # Environment template (no secrets)
-│   ├── audit-state.json             # Tracked: last audited job ID
 │   └── src/
-│       ├── index.js                 # Express app entry, routes, audit scheduler
+│       ├── index.js                 # Express app entry, routes, audit logic
 │       ├── db.js                    # Turso client + CRUD queries
 │       ├── pi-client.js             # Pi RPC subprocess manager
 │       ├── extractor.js             # HTML→Markdown→Pi extraction pipeline
@@ -321,10 +320,10 @@ The audit system checks whether the extraction pipeline missed any data by compa
 
 ### Flow
 
-1. **Trigger** — Audit runs via:
-   - Manual: `curl -X POST http://localhost:3001/api/audit/run`
-   - Scheduler: Every 6 hours automatically
-   - Full re-check: `{"full": true}` in the request body
+1. **Trigger** — Audit runs:
+   - **Automatically** on every new job save (via `auditSingleJob()` in check-job handler)
+   - **Manually**: `curl -X POST http://localhost:3001/api/audit/run`
+   - **Full re-check**: `{"full": true}` in the request body
 
 2. **LLM extraction** — For each job, the **full raw HTML** is sent to Pi. Unlike the initial extraction (which goes through Readability and loses `<head>`), this gives Pi access to everything: JSON-LD, meta tags, microdata, visible text, any format.
 
