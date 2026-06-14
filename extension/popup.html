@@ -8,57 +8,182 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      width: 300px;
-      padding: 16px;
+      width: 320px;
+      padding: 14px;
       background: #1a1a2e;
       color: #e0e0e0;
-    }
-    h1 {
-      font-size: 18px;
-      margin-bottom: 12px;
-      color: #7c83ff;
-    }
-    .stats {
       font-size: 13px;
-      color: #a0a0b0;
-      margin-bottom: 16px;
     }
-    .status {
-      padding: 12px;
-      border-radius: 8px;
-      background: #16213e;
-      font-size: 13px;
-      line-height: 1.5;
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
     }
-    .status .label {
+
+    .header h1 {
+      font-size: 16px;
       color: #7c83ff;
       font-weight: 600;
     }
-    .status .value {
-      color: #e0e0e0;
+
+    .header .total-badge {
+      font-size: 13px;
+      color: #a0a0b0;
+      background: #16213e;
+      padding: 3px 10px;
+      border-radius: 12px;
     }
-    .footer {
-      margin-top: 12px;
+
+    .bar-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 12px;
+    }
+
+    .bar-label {
+      width: 68px;
+      color: #8080a0;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .bar-track {
+      flex: 1;
+      height: 18px;
+      background: #16213e;
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.4s ease;
+      display: flex;
+      align-items: center;
+      padding-left: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #fff;
+      min-width: 0;
+    }
+
+    .bar-fill.applied    { background: #4a7cff; }
+    .bar-fill.interview  { background: #7c83ff; }
+    .bar-fill.offer      { background: #4CAF50; }
+    .bar-fill.rejected   { background: #f44336; }
+
+    .bar-count {
+      width: 28px;
+      text-align: left;
+      font-weight: 600;
+      color: #e0e0e0;
+      flex-shrink: 0;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid #2a2a4e;
+      margin: 12px 0;
+    }
+
+    .footer-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+    }
+
+    .pi-status {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .pi-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .pi-dot.ready  { background: #4CAF50; }
+    .pi-dot.busy   { background: #FFA500; }
+    .pi-dot.offline { background: #f44336; }
+
+    .gap-alert {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      margin-bottom: 10px;
+    }
+
+    .gap-alert.warning {
+      background: #3a2a1a;
+      border: 1px solid #6a4a2a;
+      color: #ffa500;
+    }
+
+    .gap-alert.ok {
+      background: #1a2a1e;
+      border: 1px solid #2a4a3a;
+      color: #80d0a0;
+    }
+
+    a {
+      color: #7c83ff;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .loading {
+      color: #8080a0;
+      text-align: center;
+      padding: 24px 0;
+    }
+
+    .error-state {
+      color: #f44336;
+      text-align: center;
+      padding: 20px 0;
+      line-height: 1.6;
+    }
+
+    .error-state .detail {
+      font-size: 11px;
+      color: #8080a0;
+    }
+
+    .tip {
       font-size: 11px;
       color: #606080;
       text-align: center;
-    }
-    .error {
-      color: #f44336;
-    }
-    .loading {
-      color: #ffa500;
+      margin-top: 10px;
     }
   </style>
 </head>
 <body>
-  <h1>🔍 SimpleSeek</h1>
-  <div class="stats" id="stats">Loading...</div>
-  <div class="status" id="status">
-    <span class="label">Tip:</span>
-    <span class="value">Right-click on any job page → SimpleSeek → Duplication Check</span>
+  <div class="header">
+    <h1>🔍 SimpleSeek</h1>
+    <span class="total-badge" id="totalBadge">📊 —</span>
   </div>
-  <div class="footer">SimpleSeek v0.1.0</div>
+
+  <div id="content">
+    <div class="loading">Loading...</div>
+  </div>
 
   <script src="popup.js"></script>
 </body>
