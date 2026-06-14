@@ -1,4 +1,5 @@
-# ── Database (auto-generated) ────────────────────────
+# ── Database (no longer local — data lives in Turso cloud) ─
+# Kept for safety if you revert to local SQLite
 server/data/*.db
 server/data/*.db-wal
 server/data/*.db-shm

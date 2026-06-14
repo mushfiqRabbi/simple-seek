@@ -67,7 +67,7 @@ app.post("/api/check-job", async (req, res) => {
     const { extracted, markdown, sourceDomain } = await extractJobInfo(html, url, piClient);
 
     // Step 2: Check for duplicates
-    const duplicate = checkDuplicate({
+    const duplicate = await checkDuplicate({
       url,
       company: extracted.company,
       title: extracted.title,
@@ -104,7 +104,7 @@ app.post("/api/check-job", async (req, res) => {
     }
 
     // Step 3: Store the new job
-    const saved = saveNewJob({
+    const saved = await saveNewJob({
       url,
       company: extracted.company,
       title: extracted.title,
@@ -147,12 +147,12 @@ app.post("/api/check-job", async (req, res) => {
  * List all applied jobs (for debugging and verification).
  * Supports pagination via ?limit=50&offset=0
  */
-app.get("/api/jobs", (req, res) => {
+app.get("/api/jobs", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 50;
     const offset = parseInt(req.query.offset) || 0;
-    const jobs = getAllJobs({ limit, offset });
-    const total = getJobCount();
+    const jobs = await getAllJobs({ limit, offset });
+    const total = await getJobCount();
 
     res.json({ jobs, total, limit, offset });
   } catch (err) {
@@ -176,19 +176,19 @@ app.get(["/", "/dashboard"], (req, res) => {
  *
  * Update a job's fields (status, company, title, location, deadline, role_type, summary).
  */
-app.put("/api/jobs/:id", (req, res) => {
+app.put("/api/jobs/:id", async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
       return res.status(400).json({ status: "error", message: "Invalid job ID" });
     }
 
-    const existing = getJobById(id);
+    const existing = await getJobById(id);
     if (!existing) {
       return res.status(404).json({ status: "error", message: "Job not found" });
     }
 
-    const updated = updateJob(id, req.body);
+    const updated = await updateJob(id, req.body);
     console.log(`[api] Updated job ${id}:`, JSON.stringify(req.body));
     res.json({ status: "ok", job: updated });
   } catch (err) {
@@ -202,14 +202,14 @@ app.put("/api/jobs/:id", (req, res) => {
  *
  * Delete a job by ID.
  */
-app.delete("/api/jobs/:id", (req, res) => {
+app.delete("/api/jobs/:id", async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
       return res.status(400).json({ status: "error", message: "Invalid job ID" });
     }
 
-    const deleted = deleteJob(id);
+    const deleted = await deleteJob(id);
     if (!deleted) {
       return res.status(404).json({ status: "error", message: "Job not found" });
     }
@@ -240,7 +240,7 @@ app.get("/api/health", (req, res) => {
 async function main() {
   try {
     // Initialize database
-    initDatabase();
+    await initDatabase();
     console.log("[server] Database initialized");
 
     // Start Pi RPC client

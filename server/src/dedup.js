@@ -3,6 +3,8 @@
  *
  * Thin wrapper around db.js findDuplicate() with logging.
  * Matching priority: URL → Job ID → Company + Title (case-insensitive).
+ *
+ * All functions are async to match the Turso async driver.
  */
 
 import { findDuplicate, insertJob } from "./db.js";
@@ -15,10 +17,10 @@ import { findDuplicate, insertJob } from "./db.js";
  * @param {string|null} jobInfo.company - Company name
  * @param {string|null} jobInfo.title - Job title
  * @param {string|null} jobInfo.job_id - Requisition/Job ID
- * @returns {object|null} The matched job record, or null if no duplicate
+ * @returns {Promise<object|null>} The matched job record, or null if no duplicate
  */
-export function checkDuplicate(jobInfo) {
-  const duplicate = findDuplicate({
+export async function checkDuplicate(jobInfo) {
+  const duplicate = await findDuplicate({
     url: jobInfo.url,
     company: jobInfo.company,
     title: jobInfo.title,
@@ -28,7 +30,7 @@ export function checkDuplicate(jobInfo) {
   if (duplicate) {
     console.log(
       `[dedup] DUPLICATE FOUND: "${duplicate.title}" at ${duplicate.company} ` +
-      `(applied ${duplicate.applied_at}) — strategy: ${duplicate._matchStrategy || "auto"}`
+      `(applied ${duplicate.applied_at})`
     );
   }
 
@@ -39,10 +41,10 @@ export function checkDuplicate(jobInfo) {
  * Store a new job and return the saved record.
  *
  * @param {object} data - All job data to persist
- * @returns {object} The inserted job row
+ * @returns {Promise<object>} The inserted job row
  */
-export function saveNewJob(data) {
-  const job = insertJob(data);
+export async function saveNewJob(data) {
+  const job = await insertJob(data);
   console.log(`[dedup] New job saved: id=${job.id}, "${job.title}" at ${job.company}`);
   return job;
 }
