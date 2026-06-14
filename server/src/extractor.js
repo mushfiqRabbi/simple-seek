@@ -24,6 +24,75 @@ const turndown = new TurndownService({
 });
 
 /**
+ * Parse JSON-LD blocks from raw HTML and extract JobPosting metadata.
+ * Many job sites embed structured data in <script type="application/ld+json">
+ * which is more reliable than regex pattern matching on visible HTML.
+ */
+function extractJsonLdMetadata(html) {
+  const meta = {};
+  const ldRegex = /<script\s+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let match;
+
+  while ((match = ldRegex.exec(html)) !== null) {
+    try {
+      // Sanitize: remove literal newlines inside JSON (descriptions often
+      // contain multi-line HTML, which breaks JSON.parse)
+      const sane = match[1].trim().replace(/\r?\n/g, ' ');
+      const data = JSON.parse(sane);
+
+      if (data['@type'] === 'JobPosting') {
+        // Job ID / Requisition ID from identifier.value
+        if (data.identifier && data.identifier.value) {
+          meta.job_id = String(data.identifier.value);
+        }
+
+        // Employment type — normalise common formats
+        if (data.employmentType) {
+          const et = data.employmentType;
+          const normalise = {
+            'full_time': 'Full-time',
+            'part_time': 'Part-time',
+            'fulltime': 'Full-time',
+            'parttime': 'Part-time',
+            'temporary': 'Temporary',
+            'contract': 'Contract',
+            'freelance': 'Freelance',
+            'internship': 'Internship',
+          };
+          meta.role_type = normalise[et.toLowerCase()]
+            || et.replace(/_/g, '-').replace(/\b\w/g, c => c.toUpperCase());
+        }
+
+        // Location from jobLocation.address
+        if (data.jobLocation && data.jobLocation.address) {
+          const addr = data.jobLocation.address;
+          const parts = [
+            addr.addressLocality,
+            addr.addressRegion,
+            addr.addressCountry,
+          ].filter(Boolean);
+          if (parts.length > 0) {
+            meta.location = parts.join(', ');
+          }
+        }
+
+        // Company name from hiringOrganization
+        if (data.hiringOrganization && data.hiringOrganization.name) {
+          meta.company = data.hiringOrganization.name;
+        }
+
+        break; // Found the first JobPosting, that's enough
+      }
+    } catch {
+      // Malformed JSON-LD block — skip and try the next one
+      continue;
+    }
+  }
+
+  return meta;
+}
+
+/**
  * Extract job metadata directly from raw HTML by scanning for known patterns.
  * Job sites vary wildly, so we use multiple strategies per field.
  */
@@ -104,6 +173,18 @@ function extractMetadataFromHtml(html) {
       }
     }
   }
+
+  // ── JSON-LD fallback ────────────────────────────────────────────────
+  // After all regex patterns (which look for label-value pairs), try
+  // JSON-LD structured data to fill in any remaining gaps. Many ATS
+  // platforms (Trakstar, Greenhouse, Lever, etc.) embed JobPosting
+  // schemas rather than visible label-value text.
+  const jsonld = extractJsonLdMetadata(html);
+  if (!meta.location && jsonld.location) meta.location = jsonld.location;
+  if (!meta.deadline && jsonld.deadline) meta.deadline = jsonld.deadline;
+  if (!meta.role_type && jsonld.role_type) meta.role_type = jsonld.role_type;
+  if (!meta.job_id && jsonld.job_id) meta.job_id = jsonld.job_id;
+  if (!meta.company && jsonld.company) meta.company = jsonld.company;
 
   return meta;
 }
