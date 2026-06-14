@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SimpleSeek Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+      background: #0f0f1a;
+      color: #e0e0e0;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      border-bottom: 1px solid #2a2a4a;
+      padding: 20px 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .header h1 {
+      font-size: 22px;
+      font-weight: 600;
+      color: #7c83ff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .header h1 span {
+      font-size: 14px;
+      color: #606080;
+      font-weight: 400;
+    }
+
+    .header-stats {
+      display: flex;
+      gap: 24px;
+      align-items: center;
+    }
+
+    .stat {
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .stat-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #606080;
+    }
+
+    .stat-value.new { color: #4CAF50; }
+    .stat-value.dup { color: #FFA500; }
+
+    /* ── Controls ── */
+    .controls {
+      padding: 16px 32px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      background: #0a0a14;
+      border-bottom: 1px solid #1a1a2e;
+    }
+
+    .search-box {
+      flex: 1;
+      min-width: 200px;
+      padding: 10px 16px;
+      border-radius: 8px;
+      border: 1px solid #2a2a4a;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .search-box:focus {
+      border-color: #7c83ff;
+    }
+
+    .search-box::placeholder {
+      color: #50506a;
+    }
+
+    .btn {
+      padding: 10px 20px;
+      border-radius: 8px;
+      border: none;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-primary {
+      background: #7c83ff;
+      color: #fff;
+    }
+
+    .btn-primary:hover {
+      background: #6a72f0;
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background: #2a2a4a;
+      color: #a0a0c0;
+    }
+
+    .btn-secondary:hover {
+      background: #3a3a5a;
+    }
+
+    .btn-danger {
+      background: #F44336;
+      color: #fff;
+    }
+
+    .btn-danger:hover {
+      background: #d32f2f;
+    }
+
+    .btn-danger-outline {
+      background: transparent;
+      border: 1px solid #F44336;
+      color: #F44336;
+    }
+
+    .btn-danger-outline:hover {
+      background: rgba(244,67,54,0.1);
+    }
+
+    .btn-delete-selected {
+      display: none;
+    }
+    .btn-delete-selected.visible {
+      display: inline-flex;
+    }
+
+    .filter-group {
+      display: flex;
+      gap: 6px;
+    }
+
+    .filter-btn {
+      padding: 6px 14px;
+      border-radius: 20px;
+      border: 1px solid #2a2a4a;
+      background: transparent;
+      color: #8080a0;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .filter-btn.active {
+      background: #7c83ff;
+      border-color: #7c83ff;
+      color: #fff;
+    }
+
+    .filter-btn:hover {
+      border-color: #7c83ff;
+      color: #e0e0e0;
+    }
+
+    /* ── Table ── */
+    .table-container {
+      padding: 0 32px 32px;
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+
+    thead th {
+      text-align: left;
+      padding: 12px 16px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #606080;
+      border-bottom: 1px solid #2a2a4a;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    tbody tr {
+      border-bottom: 1px solid #1a1a2e;
+      transition: background 0.15s;
+    }
+
+    tbody tr:hover {
+      background: rgba(124, 131, 255, 0.04);
+    }
+
+    tbody td {
+      padding: 14px 16px;
+      font-size: 14px;
+      vertical-align: top;
+    }
+
+    .checkbox-col {
+      width: 36px;
+      text-align: center;
+    }
+
+    .checkbox-col input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: #7c83ff;
+      cursor: pointer;
+    }
+
+    .job-title {
+      font-weight: 500;
+      color: #e0e0e0;
+    }
+
+    .job-company {
+      color: #7c83ff;
+      font-weight: 500;
+    }
+
+    .job-location {
+      color: #8080a0;
+      font-size: 13px;
+    }
+
+    .job-meta {
+      font-size: 12px;
+      color: #606080;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .badge.applied { background: rgba(76, 175, 80, 0.15); color: #4CAF50; }
+    .badge.interviewing { background: rgba(124, 131, 255, 0.15); color: #7c83ff; }
+    .badge.offer { background: rgba(76, 175, 80, 0.15); color: #4CAF50; }
+    .badge.rejected { background: rgba(244, 67, 54, 0.15); color: #F44336; }
+
+    .job-url {
+      color: #5050a0;
+      text-decoration: none;
+      font-size: 12px;
+    }
+    .job-url:hover {
+      color: #7c83ff;
+      text-decoration: underline;
+    }
+
+    /* ── Status dots ── */
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+    .status-dot.applied { background: #4CAF50; }
+    .status-dot.duplicate { background: #FFA500; }
+
+    .job-summary {
+      font-size: 13px;
+      color: #606080;
+      line-height: 1.4;
+      max-width: 300px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
+    /* ── Action buttons ── */
+    .btn-small {
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+      background: transparent;
+      opacity: 0.6;
+    }
+    .btn-small:hover { opacity: 1; transform: scale(1.15); }
+    .btn-edit:hover { color: #7c83ff; }
+    .btn-delete:hover { color: #F44336; }
+
+    /* ── Modal ── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.active { display: flex; }
+
+    .modal {
+      background: #1a1a2e;
+      border: 1px solid #2a2a4a;
+      border-radius: 12px;
+      padding: 28px;
+      width: 90%;
+      max-width: 500px;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+
+    .modal h2 {
+      font-size: 18px;
+      margin-bottom: 20px;
+      color: #e0e0e0;
+    }
+
+    .modal .form-group {
+      margin-bottom: 14px;
+    }
+
+    .modal label {
+      display: block;
+      font-size: 12px;
+      color: #8080a0;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .modal input, .modal select, .modal textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #2a2a4a;
+      background: #0f0f1a;
+      color: #e0e0e0;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+      box-sizing: border-box;
+      font-family: inherit;
+    }
+
+    .modal input:focus, .modal select:focus, .modal textarea:focus {
+      border-color: #7c83ff;
+    }
+
+    .modal textarea {
+      resize: vertical;
+      min-height: 60px;
+    }
+
+    .modal .btn-row {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 20px;
+    }
+
+    .modal .btn {
+      padding: 10px 24px;
+      border-radius: 8px;
+      border: none;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .modal .btn-save {
+      background: #7c83ff;
+      color: #fff;
+    }
+    .modal .btn-save:hover { background: #6a72f0; }
+
+    .modal .btn-cancel {
+      background: #2a2a4a;
+      color: #a0a0c0;
+    }
+    .modal .btn-cancel:hover { background: #3a3a5a; }
+
+    .modal .btn-danger {
+      background: #F44336;
+      color: #fff;
+    }
+    .modal .btn-danger:hover { background: #d32f2f; }
+
+    /* ── Delete confirm ── */
+    .delete-warning {
+      background: rgba(244,67,54,0.1);
+      border: 1px solid rgba(244,67,54,0.3);
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin: 16px 0;
+      font-size: 13px;
+      color: #F44336;
+    }
+
+    /* ── Empty state ── */
+    .empty-state {
+      text-align: center;
+      padding: 80px 20px;
+      color: #50506a;
+    }
+
+    .empty-state .icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+
+    .empty-state h2 {
+      font-size: 20px;
+      color: #8080a0;
+      margin-bottom: 8px;
+    }
+
+    .empty-state p {
+      font-size: 14px;
+      color: #50506a;
+    }
+
+    /* ── Loading ── */
+    .loading-state {
+      text-align: center;
+      padding: 60px;
+      color: #50506a;
+    }
+
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid #2a2a4a;
+      border-top-color: #7c83ff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 16px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Pagination ── */
+    .pagination {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      padding: 20px;
+      color: #606080;
+      font-size: 13px;
+    }
+
+    .pagination .btn {
+      padding: 6px 16px;
+      font-size: 13px;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      text-align: center;
+      padding: 24px;
+      color: #404060;
+      font-size: 12px;
+      border-top: 1px solid #1a1a2e;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 768px) {
+      .header { padding: 16px; }
+      .controls { padding: 12px 16px; }
+      .table-container { padding: 0 16px 16px; }
+      thead th, tbody td { padding: 10px 8px; }
+      .header h1 { font-size: 18px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ─── Header ─── -->
+  <div class="header">
+    <h1>
+      🔍 SimpleSeek
+      <span>Job Application Tracker</span>
+    </h1>
+    <div class="header-stats">
+      <div class="stat">
+        <div class="stat-value new" id="totalJobs">0</div>
+        <div class="stat-label">Total Jobs</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Controls ─── -->
+  <div class="controls">
+    <input
+      type="text"
+      class="search-box"
+      id="searchInput"
+      placeholder="Search by company, title, or location..."
+    />
+    <button class="btn btn-danger-outline btn-delete-selected" id="deleteSelectedBtn">🗑️ Delete Selected (<span id="selectedCount">0</span>)</button>
+    <button class="btn btn-primary" id="refreshBtn">⟳ Refresh</button>
+  </div>
+
+  <!-- ─── Table ─── -->
+  <div class="table-container">
+    <div class="loading-state" id="loadingState">
+      <div class="spinner"></div>
+      <p>Loading jobs...</p>
+    </div>
+
+    <div class="empty-state" id="emptyState" style="display:none">
+      <div class="icon">📋</div>
+      <h2>No jobs tracked yet</h2>
+      <p>Use the Chrome extension to check jobs — they'll appear here automatically.</p>
+      <br>
+      <button class="btn btn-primary" onclick="window.location.reload()">⟳ Refresh</button>
+    </div>
+
+    <table id="jobsTable" style="display:none">
+      <thead>
+        <tr>
+          <th class="checkbox-col"><input type="checkbox" id="selectAll" onchange="toggleSelectAll()" /></th>
+          <th style="width:28%">Job</th>
+          <th style="width:13%">Company</th>
+          <th style="width:13%">Location</th>
+          <th style="width:10%">Type</th>
+          <th style="width:8%">Deadline</th>
+          <th style="width:8%">Status</th>
+          <th style="width:8%">Applied</th>
+          <th style="width:80px">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="jobsBody"></tbody>
+    </table>
+
+    <div class="pagination" id="pagination" style="display:none">
+      <button class="btn btn-secondary" id="prevBtn">← Previous</button>
+      <span id="pageInfo">Page 1</span>
+      <button class="btn btn-secondary" id="nextBtn">Next →</button>
+    </div>
+  </div>
+
+  <div class="footer">
+    SimpleSeek v0.1.0 &middot;
+    <a href="/api/health" style="color:#5050a0;text-decoration:none;" target="_blank">Server Status</a>
+    &middot;
+    <a href="/api/jobs" style="color:#5050a0;text-decoration:none;" target="_blank">Raw API</a>
+  </div>
+
+  <!-- ─── Edit Modal ─────────────────────────────────────────────────── -->
+  <div class="modal-overlay" id="editModal">
+    <div class="modal">
+      <h2>✏️ Edit Job</h2>
+      <div class="form-group">
+        <label>Status</label>
+        <select id="editStatus">
+          <option value="applied">Applied</option>
+          <option value="interviewing">Interviewing</option>
+          <option value="offer">Offer</option>
+          <option value="rejected">Rejected</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Company</label>
+        <input type="text" id="editCompany" />
+      </div>
+      <div class="form-group">
+        <label>Title</label>
+        <input type="text" id="editTitle" />
+      </div>
+      <div class="form-group">
+        <label>Location</label>
+        <input type="text" id="editLocation" />
+      </div>
+      <div class="form-group">
+        <label>Role Type</label>
+        <input type="text" id="editRoleType" />
+      </div>
+      <div class="form-group">
+        <label>Deadline</label>
+        <input type="text" id="editDeadline" placeholder="e.g. 2025-07-15" />
+      </div>
+      <div class="form-group">
+        <label>Summary</label>
+        <textarea id="editSummary" rows="3"></textarea>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-cancel" onclick="closeEditModal()">Cancel</button>
+        <button class="btn btn-save" onclick="saveEdit()">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Delete Confirmation Modal ──────────────────────────────────── -->
+  <div class="modal-overlay" id="deleteModal">
+    <div class="modal">
+      <h2>🗑️ Delete Job</h2>
+      <div class="delete-warning" id="deleteWarning">Are you sure you want to delete this job? This cannot be undone.</div>
+      <div class="btn-row">
+        <button class="btn btn-cancel" onclick="closeDeleteModal()">Cancel</button>
+        <button class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ─── State ────────────────────────────────────────────────────────────
+    let allJobs = [];
+    let filteredJobs = [];
+    let currentPage = 0;
+    const PAGE_SIZE = 25;
+
+    // ─── DOM refs ─────────────────────────────────────────────────────────
+    const $ = (id) => document.getElementById(id);
+    const searchInput = $("searchInput");
+    const jobsBody = $("jobsBody");
+    const jobsTable = $("jobsTable");
+    const loadingState = $("loadingState");
+    const emptyState = $("emptyState");
+    const totalJobsEl = $("totalJobs");
+    const pageInfo = $("pageInfo");
+    const prevBtn = $("prevBtn");
+    const nextBtn = $("nextBtn");
+
+    // ─── Fetch ────────────────────────────────────────────────────────────
+    async function fetchJobs() {
+      loadingState.style.display = "block";
+      jobsTable.style.display = "none";
+      emptyState.style.display = "none";
+
+      try {
+        const res = await fetch("/api/jobs?limit=9999");
+        const data = await res.json();
+        allJobs = data.jobs || [];
+        totalJobsEl.textContent = allJobs.length;
+        applyFilters();
+      } catch (err) {
+        loadingState.innerHTML = `
+          <p style="color:#F44336">❌ Failed to load jobs</p>
+          <p style="font-size:13px;color:#606080">${err.message}. Is the server running?</p>
+          <br>
+          <button class="btn btn-primary" onclick="fetchJobs()">Retry</button>
+        `;
+      }
+    }
+
+    // ─── Filter & Paginate ───────────────────────────────────────────────
+    function applyFilters() {
+      const query = searchInput.value.toLowerCase().trim();
+
+      filteredJobs = allJobs.filter((job) => {
+        if (!query) return true;
+        const fields = [job.title, job.company, job.location, job.role_type, job.summary, job.source_domain];
+        return fields.some((f) => f && f.toLowerCase().includes(query));
+      });
+
+      currentPage = 0;
+      renderPage();
+    }
+
+    function renderPage() {
+      const start = currentPage * PAGE_SIZE;
+      const end = start + PAGE_SIZE;
+      const pageJobs = filteredJobs.slice(start, end);
+
+      loadingState.style.display = "none";
+
+      if (filteredJobs.length === 0) {
+        jobsTable.style.display = "none";
+        emptyState.style.display = "block";
+        $("pagination").style.display = "none";
+        return;
+      }
+
+      emptyState.style.display = "none";
+      jobsTable.style.display = "table";
+      $("pagination").style.display = filteredJobs.length > PAGE_SIZE ? "flex" : "none";
+
+      jobsBody.innerHTML = pageJobs.map(renderJobRow).join("");
+
+      // Reset select-all checkbox when re-rendering
+      $("selectAll").checked = false;
+      updateDeleteSelectedBtn();
+
+      // Update pagination
+      const totalPages = Math.ceil(filteredJobs.length / PAGE_SIZE);
+      pageInfo.textContent = `Page ${currentPage + 1} of ${totalPages} (${filteredJobs.length} jobs)`;
+      prevBtn.disabled = currentPage === 0;
+      nextBtn.disabled = end >= filteredJobs.length;
+      prevBtn.style.opacity = prevBtn.disabled ? "0.4" : "1";
+      nextBtn.style.opacity = nextBtn.disabled ? "0.4" : "1";
+    }
+
+    let selectedJobIds = new Set();
+
+    function renderJobRow(job) {
+      const appliedDate = job.applied_at ? new Date(job.applied_at + "Z").toLocaleDateString("en-US", {
+        month: "short", day: "numeric", year: "numeric"
+      }) : "—";
+
+      const deadline = job.deadline || "—";
+      const roleType = job.role_type || "—";
+      const location = job.location || "—";
+      const summary = job.summary || "";
+      const statusClass = (job.status || "applied").toLowerCase();
+
+      let companyDisplay = job.company || "—";
+      const isChecked = selectedJobIds.has(job.id);
+
+      return `
+        <tr>
+          <td class="checkbox-col">
+            <input type="checkbox" class="job-checkbox" data-id="${job.id}" ${isChecked ? "checked" : ""} onchange="onJobCheckboxChange()" />
+          </td>
+          <td>
+            <div class="job-title">${escapeHtml(job.title || "Unknown Position")}</div>
+            ${summary ? `<div class="job-summary">${escapeHtml(summary)}</div>` : ""}
+          </td>
+          <td>
+            <div class="job-company">${escapeHtml(companyDisplay)}</div>
+            <a class="job-url" href="${escapeHtml(job.url)}" target="_blank" title="${escapeHtml(job.url)}">${escapeHtml(new URL(job.url).hostname)}</a>
+          </td>
+          <td><span class="job-location">${escapeHtml(location)}</span></td>
+          <td><span class="job-meta">${escapeHtml(roleType)}</span></td>
+          <td><span class="job-meta">${escapeHtml(deadline)}</span></td>
+          <td><span class="badge ${statusClass}">${escapeHtml(job.status || "applied")}</span></td>
+          <td><span class="job-meta">${appliedDate}</span></td>
+          <td>
+            <button class="btn btn-small btn-edit" onclick="editJob(${job.id}, '${escapeHtml(job.title || '')}', '${escapeHtml(job.company || '')}', '${escapeHtml(job.location || '')}', '${escapeHtml(job.status || 'applied')}', '${escapeHtml(job.role_type || '')}', '${escapeHtml(job.deadline || '')}', '${escapeHtml(job.summary || '')}')" title="Edit">✏️</button>
+            <button class="btn btn-small btn-delete" onclick="deleteJob(${job.id}, '${escapeHtml(job.title || '')}')" title="Delete">🗑️</button>
+          </td>
+        </tr>
+      `;
+    }
+
+    // ─── Multi-Select Delete ────────────────────────────────────────────
+    function toggleSelectAll() {
+      const checked = $("selectAll").checked;
+      const checkboxes = document.querySelectorAll(".job-checkbox");
+      checkboxes.forEach(cb => {
+        cb.checked = checked;
+        const id = parseInt(cb.dataset.id);
+        if (checked) {
+          selectedJobIds.add(id);
+        } else {
+          selectedJobIds.delete(id);
+        }
+      });
+      updateDeleteSelectedBtn();
+    }
+
+    function onJobCheckboxChange() {
+      // Rebuild selectedJobIds from checkboxes (handles both checking and unchecking)
+      selectedJobIds.clear();
+      document.querySelectorAll(".job-checkbox:checked").forEach(cb => {
+        selectedJobIds.add(parseInt(cb.dataset.id));
+      });
+
+      // Update select-all state
+      const total = document.querySelectorAll(".job-checkbox").length;
+      const checked = document.querySelectorAll(".job-checkbox:checked").length;
+      $("selectAll").checked = total > 0 && checked === total;
+      $("selectAll").indeterminate = checked > 0 && checked < total;
+
+      updateDeleteSelectedBtn();
+    }
+
+    function updateDeleteSelectedBtn() {
+      const count = selectedJobIds.size;
+      const btn = $("deleteSelectedBtn");
+      $("selectedCount").textContent = count;
+      if (count > 0) {
+        btn.classList.add("visible");
+      } else {
+        btn.classList.remove("visible");
+      }
+    }
+
+    function confirmDeleteSelected() {
+      const count = selectedJobIds.size;
+      if (count === 0) return;
+
+      if (!confirm(`Delete ${count} selected job${count > 1 ? "s" : ""}? This cannot be undone.`)) return;
+
+      // Disable button to prevent double-submit
+      const btn = $("deleteSelectedBtn");
+      btn.disabled = true;
+      btn.textContent = `Deleting...`;
+
+      // Delete each selected job
+      const ids = Array.from(selectedJobIds);
+      let completed = 0;
+      let failed = 0;
+
+      ids.forEach(async (id) => {
+        try {
+          const res = await fetch(`/api/jobs/${id}`, { method: "DELETE" });
+          if (!res.ok) failed++;
+        } catch {
+          failed++;
+        } finally {
+          completed++;
+          btn.textContent = `Deleting... ${completed}/${ids.length}`;
+          if (completed === ids.length) {
+            selectedJobIds.clear();
+            btn.disabled = false;
+            btn.innerHTML = `🗑️ Delete Selected (<span id="selectedCount">0</span>)`;
+            btn.classList.remove("visible");
+            if (failed > 0) alert(`${failed} job${failed > 1 ? "s" : ""} failed to delete.`);
+            fetchJobs();
+          }
+        }
+      });
+    }
+
+    function escapeHtml(str) {
+      if (!str) return "";
+      const div = document.createElement("div");
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    // ─── Edit Modal Functions ────────────────────────────────────────────
+    let editingJobId = null;
+
+    function editJob(id, title, company, location, status, roleType, deadline, summary) {
+      editingJobId = id;
+      $("editTitle").value = decodeHtml(title);
+      $("editCompany").value = decodeHtml(company);
+      $("editLocation").value = decodeHtml(location);
+      $("editStatus").value = decodeHtml(status);
+      $("editRoleType").value = decodeHtml(roleType);
+      $("editDeadline").value = decodeHtml(deadline);
+      $("editSummary").value = decodeHtml(summary);
+      $("editModal").classList.add("active");
+    }
+
+    function closeEditModal() {
+      $("editModal").classList.remove("active");
+      editingJobId = null;
+    }
+
+    async function saveEdit() {
+      if (!editingJobId) return;
+
+      const data = {
+        status: $("editStatus").value,
+        company: $("editCompany").value,
+        title: $("editTitle").value,
+        location: $("editLocation").value,
+        role_type: $("editRoleType").value,
+        deadline: $("editDeadline").value,
+        summary: $("editSummary").value,
+      };
+
+      try {
+        const res = await fetch("/api/jobs/" + editingJobId, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          alert("Failed to save: " + (err.message || res.statusText));
+          return;
+        }
+
+        closeEditModal();
+        fetchJobs();
+      } catch (err) {
+        alert("Network error: " + err.message);
+      }
+    }
+
+    // ─── Delete Functions ────────────────────────────────────────────────
+    let deletingJobId = null;
+
+    function deleteJob(id, title) {
+      deletingJobId = id;
+      $("deleteWarning").textContent =
+        'Are you sure you want to delete "' + decodeHtml(title) + '"? This cannot be undone.';
+      $("confirmDeleteBtn").onclick = confirmDelete;
+      $("deleteModal").classList.add("active");
+    }
+
+    function closeDeleteModal() {
+      $("deleteModal").classList.remove("active");
+      deletingJobId = null;
+    }
+
+    async function confirmDelete() {
+      if (!deletingJobId) return;
+
+      try {
+        const res = await fetch("/api/jobs/" + deletingJobId, { method: "DELETE" });
+
+        if (!res.ok) {
+          const err = await res.json();
+          alert("Failed to delete: " + (err.message || res.statusText));
+          return;
+        }
+
+        closeDeleteModal();
+        fetchJobs();
+      } catch (err) {
+        alert("Network error: " + err.message);
+      }
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────────
+    function decodeHtml(str) {
+      if (!str) return "";
+      const txt = document.createElement("textarea");
+      txt.innerHTML = str;
+      return txt.value;
+    }
+
+    // Close modals on overlay click
+    $("editModal").addEventListener("click", function(e) {
+      if (e.target === this) closeEditModal();
+    });
+    $("deleteModal").addEventListener("click", function(e) {
+      if (e.target === this) closeDeleteModal();
+    });
+
+    // Keyboard: Escape closes modals
+    document.addEventListener("keydown", function(e) {
+      if (e.key === "Escape") {
+        if ($("editModal").classList.contains("active")) closeEditModal();
+        if ($("deleteModal").classList.contains("active")) closeDeleteModal();
+      }
+    });
+
+    // ─── Events ──────────────────────────────────────────────────────────
+
+    // Search with debounce
+    let searchTimer;
+    searchInput.addEventListener("input", () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(applyFilters, 200);
+    });
+
+    document.getElementById("refreshBtn").addEventListener("click", fetchJobs);
+    document.getElementById("deleteSelectedBtn").addEventListener("click", confirmDeleteSelected);
+
+    prevBtn.addEventListener("click", () => {
+      if (currentPage > 0) { currentPage--; renderPage(); }
+    });
+
+    nextBtn.addEventListener("click", () => {
+      if ((currentPage + 1) * PAGE_SIZE < filteredJobs.length) { currentPage++; renderPage(); }
+    });
+
+    // Keyboard shortcut: "/" to focus search
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "/" && !e.ctrlKey && !e.metaKey && document.activeElement !== searchInput) {
+        e.preventDefault();
+        searchInput.focus();
+      }
+      if (e.key === "Escape" && document.activeElement === searchInput) {
+        searchInput.value = "";
+        applyFilters();
+        searchInput.blur();
+      }
+    });
+
+    // ─── Init ────────────────────────────────────────────────────────────
+    fetchJobs();
+    // Auto-refresh every 60 seconds
+    setInterval(fetchJobs, 60000);
+  </script>
+
+</body>
+</html>

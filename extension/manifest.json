@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "SimpleSeek",
+  "version": "0.1.0",
+  "description": "Job duplication detection — check if you've already applied to a job via right-click context menu.",
+  "permissions": [
+    "contextMenus",
+    "scripting",
+    "notifications",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "http://localhost:3001/*",
+    "https://localhost:3001/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "SimpleSeek",
+    "default_popup": "popup.html"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

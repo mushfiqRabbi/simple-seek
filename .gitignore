@@ -1,0 +1,36 @@
+# ── Database (auto-generated) ────────────────────────
+server/data/*.db
+server/data/*.db-wal
+server/data/*.db-shm
+
+# ── Dependencies (install via npm install) ───────────
+node_modules/
+
+# ── Pi agent local state ────────────────────────────
+.pi/
+server/.pi/
+
+# ── Environment (contains secrets) ───────────────────
+.env
+.env.local
+.env.*.local
+
+# ── OS junk ──────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# ── IDE / Editor ─────────────────────────────────────
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ── Logs ─────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ── Extension build artifacts ────────────────────────
+extension/*.zip
