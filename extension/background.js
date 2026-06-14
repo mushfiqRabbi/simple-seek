@@ -27,7 +27,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
   chrome.contextMenus.create({
     id: "apply",
-    title: "Check & Save",
+    title: "Check && Save",
     parentId: "simpleseek-parent",
     contexts: ["page"],
   });
