@@ -1,6 +1,6 @@
 # SimpleSeek — Job Duplication Detection
 
-A personal job-application tracker with AI-powered duplication detection. Right-click on any job page → **SimpleSeek → Check** to see if you've already applied, or **Apply** to check and save the job.
+A personal job-application tracker with AI-powered duplication detection. Right-click on any job page → **SimpleSeek → Check Duplicate** to see if you've already applied, or **Check & Save** to check and save the job.
 
 The system uses [Pi coding agent](https://pi.dev) in RPC mode to extract structured job data (company, title, location, deadline) from the page HTML, then checks a **Turso-hosted SQLite database** for duplicates — accessible from any device.
 
@@ -105,8 +105,8 @@ Either way the server starts on `http://localhost:3001`. Pi is automatically lau
 
 | Option | What it does |
 |--------|-------------|
-| **Check** | Checks for duplicates and notifies you. Does **not** save anything. |
-| **Apply** | Checks for duplicates and, if new, saves the job to your database. |
+| **Check Duplicate** | Checks for duplicates and notifies you. Does **not** save anything. |
+| **Check & Save** | Checks for duplicates and, if new, saves the job to your database. |
 
 3. Click the notification to open the dashboard.
 
@@ -135,7 +135,7 @@ Check if a job is a duplicate and optionally save it.
 | `url`  | Page URL |
 | `action` | `"check"` — only check, don't save. `"apply"` — check and save if new (default). |
 
-**Response (new — `apply` action):**
+**Response (new — `"apply"` action):**
 ```json
 {
   "status": "new",
@@ -151,7 +151,7 @@ Check if a job is a duplicate and optionally save it.
 }
 ```
 
-**Response (new — `check` action):**
+**Response (new — `"check"` action):**
 ```json
 {
   "status": "new",
@@ -321,7 +321,7 @@ When you click the SimpleSeek icon in the Chrome toolbar, you'll see:
    - **Priority 2:** Job ID / Requisition ID match
    - **Priority 3:** Company + Title (case-insensitive)
 
-3. **Storage** — New jobs (via **Apply**) are saved with all extracted metadata plus the original HTML and markdown for future re-analysis.
+3. **Storage** — New jobs (via **Check & Save**) are saved with all extracted metadata plus the original HTML and markdown for future re-analysis.
 
 This approach is cheaper, faster, and more reliable than asking the AI to compare two jobs directly.
 
