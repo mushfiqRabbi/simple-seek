@@ -95,6 +95,23 @@
       border-color: #7c83ff;
     }
 
+    .filter-select {
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid #2a2a4a;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      font-size: 13px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .filter-select:focus {
+      border-color: #7c83ff;
+    }
+
+    .filter-select option { background: #1a1a2e; }
+
     .search-box::placeholder {
       color: #50506a;
     }
@@ -561,6 +578,55 @@
       font-size: 13px;
     }
     .filter-row select option { background: #1a1a2e; }
+    .filter-row .btn { flex-shrink: 0; }
+
+    .audit-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-left: auto;
+    }
+
+    .audit-actions .btn {
+      padding: 6px 14px;
+      font-size: 12px;
+    }
+
+    .audit-result-toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      z-index: 999;
+      animation: fadeInUp 0.3s ease;
+      max-width: 400px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+    }
+
+    .audit-result-toast.success {
+      background: #1a3a2e;
+      border: 1px solid #2a6a4e;
+      color: #80d0a0;
+    }
+
+    .audit-result-toast.error {
+      background: #3a1a1a;
+      border: 1px solid #6a2a2a;
+      color: #ff8080;
+    }
+
+    .audit-result-toast.info {
+      background: #1a1a3a;
+      border: 1px solid #2a2a6a;
+      color: #8080ff;
+    }
+
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
     .audit-stats-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -635,6 +701,19 @@
         id="searchInput"
         placeholder="Search by company, title, or location..."
       />
+      <select class="filter-select" id="statusFilter" onchange="applyFilters()">
+        <option value="">All Statuses</option>
+        <option value="applied">Applied</option>
+        <option value="interviewing">Interviewing</option>
+        <option value="offer">Offer</option>
+        <option value="rejected">Rejected</option>
+      </select>
+      <select class="filter-select" id="typeFilter" onchange="applyFilters()">
+        <option value="">All Types</option>
+        <option value="remote">Remote</option>
+        <option value="onsite">On-site</option>
+        <option value="hybrid">Hybrid</option>
+      </select>
       <button class="btn btn-danger-outline btn-delete-selected" id="deleteSelectedBtn">🗑️ Delete Selected (<span id="selectedCount">0</span>)</button>
       <button class="btn btn-primary" id="refreshBtn">⟳ Refresh</button>
     </div>
@@ -703,6 +782,10 @@
         <option value="1">Extraction Fixed</option>
       </select>
       <button class="btn btn-primary" onclick="loadAuditLogs()">⟳ Refresh</button>
+      <div class="audit-actions">
+        <button class="btn btn-primary" id="runAuditBtn" onclick="triggerAudit(false)">▶ Run Audit</button>
+        <button class="btn btn-secondary" id="fullRecheckBtn" onclick="triggerAudit(true)">⟳ Full Re-Check</button>
+      </div>
     </div>
 
     <div class="audit-stats-grid" id="auditStatsGrid"></div>
@@ -843,11 +926,20 @@
     // ─── Filter & Paginate ───────────────────────────────────────────────
     function applyFilters() {
       const query = searchInput.value.toLowerCase().trim();
+      const statusVal = $("statusFilter").value;
+      const typeVal = $("typeFilter").value;
 
       filteredJobs = allJobs.filter((job) => {
-        if (!query) return true;
-        const fields = [job.title, job.company, job.location, job.role_type, job.summary, job.source_domain];
-        return fields.some((f) => f && f.toLowerCase().includes(query));
+        // Text search
+        if (query) {
+          const fields = [job.title, job.company, job.location, job.role_type, job.summary, job.source_domain];
+          if (!fields.some((f) => f && f.toLowerCase().includes(query))) return false;
+        }
+        // Status filter
+        if (statusVal && (job.status || "applied").toLowerCase() !== statusVal) return false;
+        // Type filter
+        if (typeVal && (job.role_type || "").toLowerCase() !== typeVal) return false;
+        return true;
       });
 
       currentPage = 0;
@@ -1140,6 +1232,60 @@
         $("jobsSection").classList.add("hidden");
         $("auditSection").classList.add("active");
         loadAuditLogs();
+      }
+    }
+
+    // ─── Audit Trigger & Toast ───────────────────────────────────────────────
+    function showAuditToast(message, type = "info") {
+      const existing = document.querySelector(".audit-result-toast");
+      if (existing) existing.remove();
+
+      const toast = document.createElement("div");
+      toast.className = "audit-result-toast " + type;
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 5000);
+    }
+
+    async function triggerAudit(full = false) {
+      const btn = full ? $("fullRecheckBtn") : $("runAuditBtn");
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "⏳ Running...";
+
+      try {
+        const res = await fetch("/api/audit/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: full ? JSON.stringify({ full: true }) : "{}",
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          showAuditToast("❌ " + (err.message || res.statusText), "error");
+          return;
+        }
+
+        const data = await res.json();
+
+        if (data.status === "no_new_jobs") {
+          showAuditToast("✅ All jobs already audited" + (full ? " (full re-check)" : ""), "info");
+        } else if (data.status === "ok") {
+          showAuditToast(
+            "✅ Checked " + data.jobsChecked + " job(s), wrote " + data.logsWritten + " log(s)",
+            "success"
+          );
+        } else {
+          showAuditToast("⚠️ " + (data.message || "Unexpected response"), "info");
+        }
+
+        // Refresh the audit table
+        loadAuditLogs();
+      } catch (err) {
+        showAuditToast("❌ " + err.message, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
       }
     }
 
