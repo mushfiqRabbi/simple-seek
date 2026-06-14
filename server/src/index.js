@@ -17,7 +17,7 @@ import { PiRPCClient } from "./pi-client.js";
 import { extractJobInfo } from "./extractor.js";
 import { checkDuplicate, saveNewJob } from "./dedup.js";
 import { getAllJobs, getJobCount, updateJob, deleteJob, getJobById, getAuditLogs, getAuditStats, resolveAuditLog, getUnresolvedAuditLogs, deleteAuditLogsByJobId, getAuditLogById, markExtractionFixed, query } from "./db.js";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -409,18 +409,9 @@ app.put("/api/audit/:id/mark-extraction-fixed", async (req, res) => {
 
 // ─── Audit State ────────────────────────────────────────────────────────────
 
-const AUDIT_STATE_FILE = join(__dirname, "audit-state.json");
-
-function readAuditState() {
-  try {
-    return JSON.parse(readFileSync(AUDIT_STATE_FILE, "utf8"));
-  } catch {
-    return { lastAuditedId: 0 };
-  }
-}
-
-function writeAuditState(state) {
-  writeFileSync(AUDIT_STATE_FILE, JSON.stringify(state, null, 2) + "\n");
+async function getLastAuditedId() {
+  const result = await query("SELECT COALESCE(MAX(job_id), 0) as lastId FROM audit_logs");
+  return Number(result.rows[0]?.lastId ?? 0);
 }
 
 /**
@@ -444,8 +435,7 @@ app.post("/api/audit/run", async (req, res) => {
     }
 
     const forceFull = req.body?.full === true;
-    const state = readAuditState();
-    const lastId = forceFull ? 0 : state.lastAuditedId;
+    const lastId = forceFull ? 0 : await getLastAuditedId();
     const { randomUUID } = await import("node:crypto");
     const runId = randomUUID();
 
@@ -460,7 +450,7 @@ app.post("/api/audit/run", async (req, res) => {
       return res.json({
         __audit_result__: true,
         status: "no_new_jobs",
-        lastAuditedId: state.lastAuditedId,
+        lastAuditedId: lastId,
         forceFull,
         message: "All jobs already audited. Use --full to re-audit everything.",
       });
@@ -576,8 +566,7 @@ app.post("/api/audit/run", async (req, res) => {
     }
 
     // Update state
-    writeAuditState({ lastAuditedId: maxId });
-
+      // lastAuditedId tracked via audit_logs table
     console.log(`[audit] Done: checked ${jobsChecked} job(s), wrote ${totalLogs} log(s), run=${runId}`);
 
     res.json({
