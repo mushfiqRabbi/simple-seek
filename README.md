@@ -251,19 +251,30 @@ The dashboard is served at `http://localhost:3001/` (also `/dashboard`). It's a 
 
 ### Jobs Tab
 - **Search** — Filter jobs by company, title, or location
+- **Status filter** — Filter by Applied / Interviewing / Offer / Rejected
+- **Type filter** — Filter by Remote / On-site / Hybrid
 - **Edit** — Click ✏️ on any row to update fields (status, dates, notes)
 - **Delete single** — Remove a job with confirmation prompt
 - **Multi-select delete** — Check multiple jobs and delete them all at once
 - **Select All** — Toggle checkbox in the table header
 - **Pagination** — Browse through jobs
 - **Dark theme** — Easy on the eyes
-- **Auto-refresh** — Updates every 60 seconds
 
 ### Audit Tab
 - **Stats cards** — Shows Extraction Issues count, OK fields, total checks
 - **Filters** — Filter by field, status, or extraction fix status
+- **Trigger audit** — "▶ Run Audit" (incremental) and "⟳ Full Re-Check" buttons
 - **Table** — Lists each audited field per job with status, found value, stored value, and extraction fix status
 - **Badge** — Tab shows the number of extraction issues that need code fixes
+
+## Extension Popup
+
+When you click the SimpleSeek icon in the Chrome toolbar, you'll see:
+
+- **Pipeline bars** — Status distribution (Applied / Interview / Offer / Rejected)
+- **Extraction gap alert** — Warning if any audits found missing or mismatched data
+- **Pi status** — Green dot when Pi is ready, orange when connecting
+- **Dashboard link** — One click to open the full dashboard
 
 ## Project Structure
 
