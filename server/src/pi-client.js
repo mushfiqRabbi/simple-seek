@@ -278,14 +278,10 @@ ${markdown}`;
    * Unlike extractJobInfo, this sends the FULL raw HTML to Pi without
    * going through Readability — so Pi sees JSON-LD, meta tags, everything.
    *
-   * Truncates to 100K chars to stay within token limits.
+   * The full raw HTML is sent — no truncation — so the LLM has complete
+   * visibility into the page content including sidebars and footer metadata.
    */
   async extractFromRawHtml(rawHtml) {
-    const MAX_HTML_LENGTH = 100_000;
-    const html = rawHtml.length > MAX_HTML_LENGTH
-      ? rawHtml.slice(0, MAX_HTML_LENGTH) + "\n\n[... truncated ...]"
-      : rawHtml;
-
     const promptText = `You are auditing a job posting extraction pipeline.
 Below is the RAW HTML of a job posting page. Extract these fields from it.
 
@@ -308,7 +304,7 @@ Return ONLY valid JSON:
 
 RAW HTML:
 \`\`\`html
-${html}
+${rawHtml}
 \`\`\``;
 
     const agentEndMsg = await this.prompt(promptText);

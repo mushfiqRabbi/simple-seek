@@ -330,6 +330,7 @@
       opacity: 0.6;
     }
     .btn-small:hover { opacity: 1; transform: scale(1.15); }
+    .btn-audit:hover { color: #4CAF50; }
     .btn-edit:hover { color: #7c83ff; }
     .btn-delete:hover { color: #F44336; }
 
@@ -783,8 +784,12 @@
       </select>
       <button class="btn btn-primary" onclick="loadAuditLogs()">⟳ Refresh</button>
       <div class="audit-actions">
-        <button class="btn btn-primary" id="runAuditBtn" onclick="triggerAudit(false)">▶ Run Audit</button>
-        <button class="btn btn-secondary" id="fullRecheckBtn" onclick="triggerAudit(true)">⟳ Full Re-Check</button>
+        <select id="auditScopeSelect" class="filter-select" style="font-size:12px;padding:6px 10px;">
+          <option value="unaudited">Unaudited jobs</option>
+          <option value="all">All jobs (full re-check)</option>
+          <option value="selected">Selected from Jobs tab</option>
+        </select>
+        <button class="btn btn-primary" id="batchAuditBtn" onclick="triggerBatchAudit()">▶ Batch Audit</button>
       </div>
     </div>
 
@@ -1014,6 +1019,7 @@
           <td><span class="badge ${statusClass}">${escapeHtml(job.status || "applied")}</span></td>
           <td><span class="job-meta">${appliedDate}</span></td>
           <td>
+            <button class="btn btn-small btn-audit" onclick="triggerSingleAudit(${job.id})" title="Audit this job">🔍</button>
             <button class="btn btn-small btn-edit" onclick="editJob(${job.id}, '${escapeHtml(job.title || '')}', '${escapeHtml(job.company || '')}', '${escapeHtml(job.location || '')}', '${escapeHtml(job.status || 'applied')}', '${escapeHtml(job.role_type || '')}', '${escapeHtml(job.deadline || '')}', '${escapeHtml(job.summary || '')}')" title="Edit">✏️</button>
             <button class="btn btn-small btn-delete" onclick="deleteJob(${job.id}, '${escapeHtml(job.title || '')}')" title="Delete">🗑️</button>
           </td>
@@ -1247,17 +1253,55 @@
       setTimeout(() => toast.remove(), 5000);
     }
 
-    async function triggerAudit(full = false) {
-      const btn = full ? $("fullRecheckBtn") : $("runAuditBtn");
+    async function triggerBatchAudit() {
+      const btn = $("batchAuditBtn");
       const originalText = btn.textContent;
       btn.disabled = true;
       btn.textContent = "⏳ Running...";
 
+      const scope = $("auditScopeSelect").value;
+
       try {
-        const res = await fetch("/api/audit/run", {
+        let body = {};
+        let url = "/api/audit/run";
+
+        if (scope === "all") {
+          body = { full: true };
+        } else if (scope === "selected") {
+          // Audit selected jobs from the Jobs tab (one by one)
+          const selectedIds = Array.from(selectedJobIds);
+          if (selectedIds.length === 0) {
+            showAuditToast("⚠️ No jobs selected in the Jobs tab", "error");
+            btn.disabled = false;
+            btn.textContent = originalText;
+            return;
+          }
+
+          let totalWritten = 0;
+          for (const id of selectedIds) {
+            try {
+              const r = await fetch("/api/audit/run/" + id, { method: "POST" });
+              const d = await r.json();
+              totalWritten += d.logsWritten || 0;
+            } catch (e) {
+              console.error("Failed to audit job #" + id, e);
+            }
+          }
+
+          showAuditToast(
+            "✅ Audited " + selectedIds.length + " selected job(s), wrote " + totalWritten + " log(s)",
+            "success"
+          );
+          loadAuditLogs();
+          btn.disabled = false;
+          btn.textContent = originalText;
+          return;
+        }
+
+        const res = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: full ? JSON.stringify({ full: true }) : "{}",
+          body: JSON.stringify(body),
         });
 
         if (!res.ok) {
@@ -1269,7 +1313,7 @@
         const data = await res.json();
 
         if (data.status === "no_new_jobs") {
-          showAuditToast("✅ All jobs already audited" + (full ? " (full re-check)" : ""), "info");
+          showAuditToast("✅ All jobs already audited" + (scope === "all" ? " (full re-check)" : ""), "info");
         } else if (data.status === "ok") {
           showAuditToast(
             "✅ Checked " + data.jobsChecked + " job(s), wrote " + data.logsWritten + " log(s)",
@@ -1286,6 +1330,36 @@
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
+      }
+    }
+
+    async function triggerSingleAudit(jobId) {
+      showAuditToast("⏳ Auditing job #" + jobId + "...", "info");
+
+      try {
+        const res = await fetch("/api/audit/run/" + jobId, {
+          method: "POST",
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          showAuditToast("❌ Job #" + jobId + ": " + (err.message || res.statusText), "error");
+          return;
+        }
+
+        const data = await res.json();
+
+        showAuditToast(
+          "✅ Job #" + jobId + ": wrote " + data.logsWritten + " log(s)",
+          "success"
+        );
+
+        // Refresh the audit table if we're on the audit tab
+        if ($("auditSection").classList.contains("active")) {
+          loadAuditLogs();
+        }
+      } catch (err) {
+        showAuditToast("❌ Job #" + jobId + ": " + err.message, "error");
       }
     }
 

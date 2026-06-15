@@ -417,14 +417,9 @@ app.put("/api/audit/:id/mark-extraction-fixed", async (req, res) => {
 
 // ─── Audit State ────────────────────────────────────────────────────────────
 
-async function getLastAuditedId() {
-  const result = await query("SELECT COALESCE(MAX(job_id), 0) as lastId FROM audit_logs");
-  return Number(result.rows[0]?.lastId ?? 0);
-}
-
 /**
  * Audit a single job by ID. Used by the check-job handler (auto-audit on save)
- * and by POST /api/audit/run (batch audit).
+ * and by POST /api/audit/run (batch audit) and by POST /api/audit/run/:id.
  */
 async function auditSingleJob(jobId, runId) {
   if (!piClient || !piClient.ready) {
@@ -480,7 +475,7 @@ async function auditSingleJob(jobId, runId) {
       storedValue = "null";
       note = `Pi found "${foundVal}" in raw HTML but DB has null`;
       if (allowedAutoFields.includes(field)) autoApplied = true;
-    } else if (foundVal !== undefined && foundVal !== null && storedVal !== null && String(foundVal).toLowerCase() !== String(storedVal).toLowerCase()) {
+    } else if (foundVal !== undefined && foundVal !== null && storedVal !== null && String(foundVal).trim().toLowerCase() !== String(storedVal).trim().toLowerCase()) {
       status = "mismatch";
       foundValue = String(foundVal);
       storedValue = String(storedVal);
@@ -498,14 +493,7 @@ async function auditSingleJob(jobId, runId) {
       note = "Pi could not find this field in the raw HTML";
     }
 
-    // Dedup: skip if same (job_id, field, status, extraction_not_fixed) already exists
-    const existing = await query(
-      "SELECT id FROM audit_logs WHERE job_id = ? AND field = ? AND status = ? AND extraction_fixed = 0 LIMIT 1",
-      [jobId, field, status]
-    );
-    if (existing.rows[0]) continue;
-
-    // Auto-apply: update the job's field with the found value
+    // Auto-apply: update the job's field with the found value (before logging)
     if (autoApplied) {
       const updateData = {};
       updateData[field] = foundValue;
@@ -516,12 +504,45 @@ async function auditSingleJob(jobId, runId) {
       }
     }
 
-    // Insert with resolved=1 (data patched) and extraction_fixed=0 (code still needs fix)
-    await query(
-      "INSERT INTO audit_logs (run_id, job_id, field, status, found_value, stored_value, source, note, resolved, extraction_fixed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [runId, jobId, field, status, foundValue, storedValue, sourceVal, note, 1, 0]
+    // Check if we already have an audit log for this (job_id, field)
+    // Uses the most recent entry to compare statuses
+    const existing = await query(
+      "SELECT id, status, extraction_fixed FROM audit_logs WHERE job_id = ? AND field = ? ORDER BY created_at DESC LIMIT 1",
+      [jobId, field]
     );
-    logsWritten++;
+    const existingRow = existing.rows[0];
+
+    if (existingRow) {
+      // If status hasn't changed, skip (nothing new to record)
+      if (existingRow.status === status) continue;
+
+      // Status changed — update the existing row with new findings.
+      // Preserve extraction_fixed if it was already set to 1 (code was manually fixed),
+      // but reset it to 0 if the new status is still 'missing' or 'mismatch'
+      // (meaning the fix didn't fully resolve it).
+      let newExtractionFixed = existingRow.extraction_fixed;
+      if (status === "missing" || status === "mismatch") {
+        newExtractionFixed = 0;
+      }
+
+      await query(
+        "UPDATE audit_logs SET run_id=?, status=?, found_value=?, stored_value=?, note=?, resolved=1, extraction_fixed=? WHERE id=?",
+        [runId, status, foundValue, storedValue, note, newExtractionFixed, existingRow.id]
+      );
+      logsWritten++;
+
+      if (autoApplied) {
+        console.log(`[audit] Updated audit log: job #${jobId} ${field} — status changed from "${existingRow.status}" to "${status}"`);
+      }
+    } else {
+      // No existing entry — INSERT new with resolved=1 (data patched) and
+      // extraction_fixed=0 (code still needs fix)
+      await query(
+        "INSERT INTO audit_logs (run_id, job_id, field, status, found_value, stored_value, source, note, resolved, extraction_fixed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [runId, jobId, field, status, foundValue, storedValue, sourceVal, note, 1, 0]
+      );
+      logsWritten++;
+    }
 
     if (autoApplied) {
       console.log(`[audit] Auto-fixed job #${jobId} ${field} = "${foundValue}"`);
@@ -532,18 +553,60 @@ async function auditSingleJob(jobId, runId) {
 }
 
 /**
+ * POST /api/audit/run/:id
+ *
+ * Audit a single job by ID. Calls auditSingleJob() which re-extracts from
+ * raw HTML via Pi, compares against DB, auto-patches gaps, and writes logs.
+ */
+app.post("/api/audit/run/:id", async (req, res) => {
+  try {
+    const jobId = parseInt(req.params.id);
+    if (isNaN(jobId)) {
+      return res.status(400).json({ status: "error", message: "Invalid job ID" });
+    }
+
+    if (!piClient || !piClient.ready) {
+      return res.status(503).json({ status: "error", message: "Pi client not ready. Wait for Pi to connect and try again." });
+    }
+
+    // Verify job exists
+    const job = await getJobById(jobId);
+    if (!job) {
+      return res.status(404).json({ status: "error", message: `Job #${jobId} not found` });
+    }
+
+    const runId = crypto.randomUUID();
+    console.log(`[audit] Single-job audit: job #${jobId}, run=${runId}`);
+
+    const written = await auditSingleJob(jobId, runId);
+
+    console.log(`[audit] Single-job audit done: job #${jobId}, wrote ${written} log(s)`);
+
+    res.json({
+      __audit_result__: true,
+      status: "ok",
+      runId,
+      jobId,
+      logsWritten: written,
+    });
+  } catch (err) {
+    console.error(`[audit] Error running single-job audit:`, err);
+    res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+/**
  * POST /api/audit/run
  *
- * Run an LLM-powered audit. Reads un-audited jobs from DB, sends each job's
- * raw HTML to Pi for extraction, compares against DB values, writes gaps
- * to audit_logs, and updates the state file.
+ * Run an LLM-powered batch audit. Reads un-audited jobs from DB (or all jobs
+ * if full=true), sends each job's raw HTML to Pi for extraction, compares
+ * against DB values, writes gaps to audit_logs.
  *
  * Body: { full?: boolean }  — set full=true to re-audit everything
  *
- * This is the main audit endpoint used by:
- *   - The auditSingleJob() function (auto-audit on new job save)
- *   - Manual curl /api/audit/run calls
- *   - The resolve skill (after fixing extraction code)
+ * Uses NOT IN to find unaudited jobs instead of MAX(job_id), which avoids
+ * permanently skipping jobs when auto-audit fails for some jobs but succeeds
+ * for later ones.
  */
 app.post("/api/audit/run", async (req, res) => {
   try {
@@ -552,39 +615,38 @@ app.post("/api/audit/run", async (req, res) => {
     }
 
     const forceFull = req.body?.full === true;
-    const lastId = forceFull ? 0 : await getLastAuditedId();
     const runId = crypto.randomUUID();
 
-    // Count new jobs
+    // Count unaudited jobs
+    const unauditedCondition = "id NOT IN (SELECT DISTINCT job_id FROM audit_logs)";
     const countResult = await query(
-      "SELECT COUNT(*) as cnt FROM jobs WHERE id > ?",
-      [lastId]
+      forceFull
+        ? "SELECT COUNT(*) as cnt FROM jobs"
+        : `SELECT COUNT(*) as cnt FROM jobs WHERE ${unauditedCondition}`
     );
-    const newCount = Number(countResult.rows[0]?.cnt ?? 0);
+    const jobCount = Number(countResult.rows[0]?.cnt ?? 0);
 
-    if (newCount === 0) {
+    if (jobCount === 0) {
       return res.json({
         __audit_result__: true,
         status: "no_new_jobs",
-        lastAuditedId: lastId,
         forceFull,
         message: "All jobs already audited. Use --full to re-audit everything.",
       });
     }
 
-    // Fetch new jobs (raw HTML needed for LLM extraction)
+    // Fetch jobs to audit
     const jobsResult = await query(
-      "SELECT id, url, company, title, location, deadline, role_type, job_id, summary, raw_html FROM jobs WHERE id > ? ORDER BY id",
-      [lastId]
+      forceFull
+        ? "SELECT id, url, company, title, location, deadline, role_type, job_id, summary, raw_html FROM jobs ORDER BY id"
+        : `SELECT id, url, company, title, location, deadline, role_type, job_id, summary, raw_html FROM jobs WHERE ${unauditedCondition} ORDER BY id`
     );
 
-    let maxId = lastId;
     let totalLogs = 0;
     let jobsChecked = 0;
 
     for (const row of jobsResult.rows) {
       const id = Number(row.id);
-      if (id > maxId) maxId = id;
       jobsChecked++;
 
       console.log(`[audit] Checking job #${id}...`);
@@ -600,8 +662,7 @@ app.post("/api/audit/run", async (req, res) => {
       runId,
       jobsChecked,
       logsWritten: totalLogs,
-      maxId,
-      lastAuditedId: maxId,
+      forceFull,
     });
   } catch (err) {
     console.error(`[audit] Error running audit:`, err);
@@ -662,11 +723,14 @@ async function main() {
       console.log(`[server]   GET  /api/audit/unresolved — Unresolved audit logs`);
       console.log(`[server]   PUT  /api/audit/:id/resolve — Resolve an audit log`);
       console.log(`[server]   PUT  /api/audit/:id/mark-extraction-fixed — Mark extraction code fixed`);
-      console.log(`[server]   POST /api/audit/run  — Run LLM-powered audit`);
+      console.log(`[server]   POST /api/audit/run  — Run batch audit (unaudited jobs)`);
+      console.log(`[server]   POST /api/audit/run/:id  — Audit a single job by ID`);
       console.log(`[server]   GET  /api/health     — Health check`);
       console.log(`[server]`);
       console.log(`[server] Audits run automatically on each new job save.`);
-      console.log(`[server] Manual: POST /api/audit/run   Full re-check: {"full": true}`);
+      console.log(`[server] Manual: POST /api/audit/run          Batch audit (unaudited only)`);
+      console.log(`[server]          POST /api/audit/run --full   Full re-check of ALL jobs`);
+      console.log(`[server]          POST /api/audit/run/5        Single-job audit for job #5`);
     });
   } catch (err) {
     console.error("[server] Fatal startup error:", err);
